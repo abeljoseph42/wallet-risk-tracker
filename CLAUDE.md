@@ -1,6 +1,5 @@
 # Wallet Risk & Portfolio Tracker: Build Instructions
 
-> Save this as `CLAUDE.md` in the repo root (Claude Code) or paste it into your Claude project instructions.
 > Work **one phase at a time**. At the end of each phase: run the tests, summarize what changed, list any open questions, and **wait for my go-ahead** before starting the next phase.
 
 ---
