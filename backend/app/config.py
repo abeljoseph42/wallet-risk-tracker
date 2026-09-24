@@ -12,7 +12,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/wallet_risk"
+    # Host port 5433 avoids clashing with a natively installed Postgres on 5432.
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5433/wallet_risk"
     etherscan_api_key: str | None = None
     # Left unset until verified against Etherscan's current docs in Phase 1.
     etherscan_rate_limit_per_sec: float | None = None
