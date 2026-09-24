@@ -2,20 +2,22 @@
 
 Confirmed against docs.etherscan.io (2026-09): base URL is
 `https://api.etherscan.io/v2/api`, chains are selected via `chainid` (1 =
-Ethereum mainnet), and the free tier caps each `txlist` page at 1,000
-records with a hard 10,000-record window per (address, block range) pair.
-To read a full history beyond that window we page within it, then restart
-from the last block seen and keep going.
+Ethereum mainnet). On the free tier `txlist`, `txlistinternal` and `tokentx`
+return at most 1,000 records per page and 10,000 per (address, block range)
+query. To read a full history beyond that window we page within it, then
+restart from the last block seen and keep going.
 """
 
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from enum import StrEnum
 
 import httpx
 from pydantic import BaseModel, Field
 
+from app.config import Settings
 from app.core.rate_limiter import TokenBucketRateLimiter
 
 logger = logging.getLogger(__name__)
@@ -25,40 +27,73 @@ ETHEREUM_MAINNET_CHAIN_ID = 1
 
 # Etherscan's documented cap on (page * offset) per (address, block-range) query.
 _MAX_RECORD_WINDOW = 10_000
-# Max records per txlist page on the free tier (Etherscan changelog, July 2026).
+# Max records per page on the free tier (Etherscan changelog, July 2026).
 TXLIST_PAGE_SIZE = 1_000
 _NO_TRANSACTIONS_MESSAGE = "No transactions found"
+
+
+class Endpoint(StrEnum):
+    NORMAL = "txlist"
+    INTERNAL = "txlistinternal"
+    TOKEN = "tokentx"
 
 
 class EtherscanError(Exception):
     """Raised for non-retryable Etherscan API errors (bad key, bad address, etc.)."""
 
 
-class EtherscanTransaction(BaseModel):
+class _RawTransfer(BaseModel):
+    """The fields we use from a txlist / txlistinternal / tokentx result item."""
+
     hash: str
     block_number: int = Field(alias="blockNumber")
     timestamp: int = Field(alias="timeStamp")
     from_address: str = Field(alias="from")
     to_address: str = Field(alias="to")
-    # Set (and `to` empty) when the transaction deployed a contract.
+    # For txlist/txlistinternal: the deployed contract when `to` is empty.
+    # For tokentx: the token contract.
     contract_address: str = Field(alias="contractAddress", default="")
-    value_wei: int = Field(alias="value")
-    is_error: bool = Field(alias="isError")
-    gas_used: int = Field(alias="gasUsed")
-
-    model_config = {"populate_by_name": True}
+    value: int
+    is_error: bool = Field(alias="isError", default=False)
+    trace_id: str = Field(alias="traceId", default="")
+    token_symbol: str | None = Field(alias="tokenSymbol", default=None)
+    token_decimal: str | None = Field(alias="tokenDecimal", default=None)
 
 
 @dataclass(frozen=True)
-class FetchedTransactions:
-    transactions: list[EtherscanTransaction]
+class Transfer:
+    """One value movement, normalized across endpoints (addresses and hash lowercase)."""
+
+    endpoint: Endpoint
+    hash: str
+    # Distinguishes several transfers inside one transaction: "" for normal txs, the
+    # traceId for internal ones, token/from/to/value for token transfers (tokentx has no
+    # log index), plus "#n" when identical transfers repeat within a transaction.
+    sub_key: str
+    block_number: int
+    timestamp: int
+    from_address: str
+    to_address: str
+    # Base units of the asset: wei for ETH, the token's smallest unit for tokens.
+    value: int
+    token_address: str | None
+    token_symbol: str | None
+    token_decimals: int | None
+    is_error: bool
+
+
+@dataclass(frozen=True)
+class FetchedTransfers:
+    transfers: list[Transfer]
     # HTTP requests sent for this fetch, retries included. Returned per call rather than
     # kept as a shared counter so concurrent fetches on one client report correctly.
     request_count: int
+    # True when `max_records` stopped the fetch before the full history was read.
+    truncated: bool = False
 
 
 class EtherscanClient:
-    """Fetches transaction history from Etherscan, rate-limited and retried."""
+    """Fetches transfer history from Etherscan, rate-limited and retried."""
 
     def __init__(
         self,
@@ -83,31 +118,37 @@ class EtherscanClient:
         self._sleep = sleep if sleep is not None else asyncio.sleep
         self._max_record_window = max_record_window
 
-    async def get_normal_transactions(
+    async def fetch_transfers(
         self,
+        endpoint: Endpoint,
         address: str,
         *,
         startblock: int = 0,
         endblock: int = 99_999_999,
         page_size: int = TXLIST_PAGE_SIZE,
-    ) -> FetchedTransactions:
-        """Return all normal transactions for `address` in [startblock, endblock].
+        max_records: int | None = None,
+    ) -> FetchedTransfers:
+        """Return `address`'s transfers from `endpoint` in [startblock, endblock], oldest first.
 
-        Pages within Etherscan's 10,000-record window using `page`/`offset`,
-        then restarts from the last block seen to continue reading histories
-        larger than the window.
+        Pages within Etherscan's 10,000-record window using `page`/`offset`, then restarts
+        from the last block seen to read histories larger than the window. Stops early
+        (`truncated=True`) once `max_records` transfers have been read.
         """
-        transactions: list[EtherscanTransaction] = []
-        seen: set[str] = set()
+        transfers: list[Transfer] = []
+        seen: set[tuple[str, str]] = set()
         requests = 0
         window_start = startblock
 
         while window_start <= endblock:
             page = 1
             last_block_in_window: int | None = None
+            # Occurrence counters restart per window: a window always re-reads the
+            # boundary block from its first transfer, so numbering stays consistent.
+            occurrences: dict[tuple[str, str], int] = {}
 
             while page * page_size <= self._max_record_window:
-                batch, attempts = await self._fetch_txlist_page(
+                batch, attempts = await self._fetch_page(
+                    endpoint,
                     address,
                     startblock=window_start,
                     endblock=endblock,
@@ -115,12 +156,16 @@ class EtherscanClient:
                     offset=page_size,
                 )
                 requests += attempts
-                for tx in batch:
-                    if tx.hash not in seen:
-                        seen.add(tx.hash)
-                        transactions.append(tx)
+                for raw in batch:
+                    transfer = _normalize(endpoint, raw, occurrences)
+                    uid = (transfer.hash, transfer.sub_key)
+                    if uid not in seen:
+                        seen.add(uid)
+                        transfers.append(transfer)
                 if len(batch) < page_size:
-                    return FetchedTransactions(transactions, requests)
+                    return FetchedTransfers(transfers, requests)
+                if max_records is not None and len(transfers) >= max_records:
+                    return FetchedTransfers(transfers, requests, truncated=True)
                 last_block_in_window = batch[-1].block_number
                 page += 1
 
@@ -129,32 +174,34 @@ class EtherscanClient:
             if last_block_in_window == window_start:
                 # A whole window sits inside one block; block numbers can't page past it.
                 logger.warning(
-                    "Over %d txs for %s in block %d; some may be missing",
+                    "Over %d %s records for %s in block %d; some may be missing",
                     self._max_record_window,
+                    endpoint,
                     address,
                     window_start,
                 )
                 window_start += 1
             else:
                 # Restart at the last block, not +1: the window may have ended mid-block.
-                # Re-read transactions are dropped by the `seen` check above.
+                # Re-read transfers are dropped by the `seen` check above.
                 window_start = last_block_in_window
 
-        return FetchedTransactions(transactions, requests)
+        return FetchedTransfers(transfers, requests)
 
-    async def _fetch_txlist_page(
+    async def _fetch_page(
         self,
+        endpoint: Endpoint,
         address: str,
         *,
         startblock: int,
         endblock: int,
         page: int,
         offset: int,
-    ) -> tuple[list[EtherscanTransaction], int]:
+    ) -> tuple[list[_RawTransfer], int]:
         params: dict[str, str | int] = {
             "chainid": self._chain_id,
             "module": "account",
-            "action": "txlist",
+            "action": endpoint.value,
             "address": address,
             "startblock": startblock,
             "endblock": endblock,
@@ -177,7 +224,7 @@ class EtherscanClient:
         if not isinstance(result, list):
             raise EtherscanError(f"Unexpected Etherscan payload for {address}: {payload}")
 
-        return [EtherscanTransaction.model_validate(item) for item in result], attempts
+        return [_RawTransfer.model_validate(item) for item in result], attempts
 
     async def _request(self, params: dict[str, str | int]) -> tuple[dict[str, object], int]:
         """GET with retry; returns the JSON payload and the number of attempts made."""
@@ -222,4 +269,49 @@ def _is_rate_limited(payload: dict[str, object]) -> bool:
     result = payload.get("result")
     return (
         payload.get("status") == "0" and isinstance(result, str) and "rate limit" in result.lower()
+    )
+
+
+def client_from_settings(settings: Settings, http: httpx.AsyncClient) -> EtherscanClient:
+    if not settings.etherscan_api_key:
+        raise EtherscanError("ETHERSCAN_API_KEY is not set")
+    rate = settings.etherscan_rate_limit_per_sec * settings.etherscan_rate_headroom
+    return EtherscanClient(
+        settings.etherscan_api_key,
+        http_client=http,
+        rate_limiter=TokenBucketRateLimiter(rate),
+    )
+
+
+def _normalize(
+    endpoint: Endpoint, raw: _RawTransfer, occurrences: dict[tuple[str, str], int]
+) -> Transfer:
+    tx_hash = raw.hash.lower()
+    from_address = raw.from_address.lower()
+    contract = raw.contract_address.lower()
+    if endpoint is Endpoint.TOKEN:
+        to_address = raw.to_address.lower()
+        token_address: str | None = contract
+        base_key = f"{contract}:{from_address}:{to_address}:{raw.value}"
+    else:
+        to_address = (raw.to_address or raw.contract_address).lower()
+        token_address = None
+        base_key = raw.trace_id if endpoint is Endpoint.INTERNAL else ""
+
+    n = occurrences.get((tx_hash, base_key), 0)
+    occurrences[(tx_hash, base_key)] = n + 1
+    decimals = raw.token_decimal
+    return Transfer(
+        endpoint=endpoint,
+        hash=tx_hash,
+        sub_key=base_key if n == 0 else f"{base_key}#{n}",
+        block_number=raw.block_number,
+        timestamp=raw.timestamp,
+        from_address=from_address,
+        to_address=to_address,
+        value=raw.value,
+        token_address=token_address,
+        token_symbol=raw.token_symbol,
+        token_decimals=int(decimals) if decimals and decimals.isdigit() else None,
+        is_error=raw.is_error,
     )

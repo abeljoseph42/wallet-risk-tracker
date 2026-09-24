@@ -1,4 +1,6 @@
-"""Fetch one address's normal transactions through the cache (hits live Etherscan on a miss).
+"""Fetch one address's normal, internal and token transfers through the cache.
+
+Hits live Etherscan on a cache miss.
 
 Usage (from backend/): python scripts/fetch_transactions.py 0xADDRESS
 Needs ETHERSCAN_API_KEY in the environment or backend/.env.
@@ -10,9 +12,8 @@ import sys
 
 import httpx
 
-from app.clients.etherscan import EtherscanClient
+from app.clients.etherscan import client_from_settings
 from app.config import get_settings
-from app.core.rate_limiter import TokenBucketRateLimiter
 from app.db.session import get_engine, get_sessionmaker
 from app.services.cache import TransactionCache
 
@@ -23,17 +24,14 @@ async def main(address: str) -> None:
         sys.exit("ETHERSCAN_API_KEY is not set.")
 
     async with httpx.AsyncClient(timeout=30) as http:
-        client = EtherscanClient(
-            settings.etherscan_api_key,
-            http_client=http,
-            rate_limiter=TokenBucketRateLimiter(settings.etherscan_rate_limit_per_sec),
-        )
+        client = client_from_settings(settings, http)
         cache = TransactionCache(get_sessionmaker(), client, ttl_seconds=settings.cache_ttl_seconds)
-        result = await cache.get_normal_transactions(address)
+        results = await cache.lookup_all(address)
     await get_engine().dispose()
 
-    source = "cache hit" if result.cache_hit else f"fetched ({result.upstream_calls} API calls)"
-    print(f"{len(result.transactions)} transactions for {address}: {source}")
+    for endpoint, result in results.items():
+        source = "cache hit" if result.cache_hit else f"fetched ({result.upstream_calls} API calls)"
+        print(f"{endpoint.value:15} {len(result.transactions):7} transfers: {source}")
 
 
 if __name__ == "__main__":

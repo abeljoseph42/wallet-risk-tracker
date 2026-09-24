@@ -246,3 +246,12 @@ async def count_labels(session: AsyncSession) -> dict[tuple[str, str], int]:
         .order_by(AddressLabel.source, AddressLabel.label_type)
     )
     return {(source, label_type): n for source, label_type, n in rows.all()}
+
+
+async def load_label_index(session: AsyncSession) -> dict[str, frozenset[str]]:
+    """Every labeled address and its label types. Small enough (hundreds) to hold in memory."""
+    rows = await session.execute(select(AddressLabel.address, AddressLabel.label_type))
+    index: dict[str, set[str]] = {}
+    for address, label_type in rows.all():
+        index.setdefault(address, set()).add(label_type)
+    return {address: frozenset(types) for address, types in index.items()}

@@ -3,7 +3,7 @@
 Paste an Ethereum address, get a 0-100 risk score based on transaction-graph proximity to
 sanctioned and known-malicious addresses, plus a portfolio view and a graph of flagged paths.
 
-> Status: Phase 2 (label ingestion). See `CLAUDE.md` for the full build plan.
+> Status: Phase 3 (graph builder). See `CLAUDE.md` for the full build plan.
 
 ## Run locally
 
@@ -20,10 +20,11 @@ docker compose up --build
 Run inside the backend container (it reads your root `.env`, including `ETHERSCAN_API_KEY`):
 
 ```bash
-docker compose run --rm backend python scripts/fetch_transactions.py 0xADDRESS  # fetch via cache
+docker compose run --rm backend python scripts/fetch_transactions.py 0xADDRESS  # all 3 transfer types via cache
 docker compose run --rm backend python scripts/cache_stats.py                   # hit rate, calls saved
 docker compose run --rm backend python scripts/ingest_ofac.py                   # OFAC SDN -> sanctioned
 docker compose run --rm backend python scripts/ingest_labels.py                 # exchange/mixer seed
+docker compose run --rm backend python scripts/build_graph.py 0xADDRESS         # BFS graph + flagged addresses
 ```
 
 Label ingests are idempotent syncs; rerun them anytime. `scripts/build_label_seed.py`
