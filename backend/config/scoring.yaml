@@ -1,0 +1,17 @@
+# Scoring parameters (CLAUDE.md section 7). Starting defaults, to be tuned with the
+# Phase 6 evaluation harness. Loaded and validated in Phase 4.
+max_hops: 3
+hop_decay: 0.5
+severity:
+  sanctioned: 1.0
+  malicious: 0.8
+  mixer: 0.7
+exchange_handling:
+  enabled: true
+  mode: discount        # "discount" or "cut"
+  exchange_discount: 0.2
+buckets:                # lower bounds, inclusive
+  low: 0
+  medium: 25
+  high: 50
+  severe: 75
