@@ -90,6 +90,16 @@ wallet-risk-tracker/
 - **Async I/O** for all external calls. Handle rate limits, timeouts, retries with backoff, and Etherscan's "no transactions found" and error payloads gracefully.
 - **Explain tradeoffs.** When you make a design decision (data structure, threshold, library), write one or two sentences in `docs/ARCHITECTURE.md` so I can defend it in an interview.
 - **Ask, don't guess,** when a requirement is ambiguous or a choice is expensive to reverse.
+- **Git workflow.** Work on one branch per phase, named `phase-<n>-<short-slug>`
+  (e.g. `phase-0-scaffold`, `phase-1-etherscan-cache`). Branch from an up-to-date `main`.
+  - Commit after each logical change with a clear, imperative message
+    (e.g. `Add token-bucket rate limiter with fake-clock tests`). No giant "phase done" commits.
+  - **Never commit to or push to `main`.** Push only the phase branch
+    (`git push -u origin <branch>`). I will review and merge.
+  - Never force-push, rewrite history, or delete branches without asking.
+  - At the end of each phase: make sure tests, ruff, and the type checker pass, push the
+    branch, then give me the summary and open questions and wait. Don't start the next
+    phase's branch until I confirm the previous one is merged.
 
 ---
 
