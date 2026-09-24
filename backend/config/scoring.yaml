@@ -15,3 +15,15 @@ buckets:                # lower bounds, inclusive
   medium: 25
   high: 50
   severe: 75
+
+# Graph builder (Phase 3). Traversal limits change which flagged addresses are found,
+# so they live here with the scoring parameters and will be part of the params hash.
+graph:
+  max_expanded_nodes: 100      # addresses whose history is fetched, per graph
+  max_neighbors_per_node: 10   # unlabeled counterparties queued per expansion (most active first)
+  max_nodes: 2000              # addresses recorded in the graph
+  max_records_per_node: 2000   # per endpoint; hitting it marks a neighbor as high-activity
+  max_records_target: 20000    # per endpoint, for the wallet being scored
+  degree_threshold: 500        # distinct counterparties above which a node is not expanded
+  skip_failed: true
+  skip_zero_value: true        # also removes zero-value "address poisoning" transfers

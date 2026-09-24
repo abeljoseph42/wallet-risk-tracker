@@ -1,7 +1,11 @@
-"""Application settings loaded from environment variables (and `.env` in local dev)."""
+"""Application settings (environment / `.env`) and tunable parameters (`config/*.yaml`)."""
 
 from functools import lru_cache
+from pathlib import Path
+from typing import Any
 
+import yaml
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,3 +37,32 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+SCORING_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "scoring.yaml"
+
+
+class GraphParams(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_hops: int = Field(ge=1, le=6)
+    max_expanded_nodes: int = Field(ge=1)
+    max_neighbors_per_node: int = Field(ge=1)
+    max_nodes: int = Field(ge=1)
+    max_records_per_node: int = Field(ge=1)
+    max_records_target: int = Field(ge=1)
+    degree_threshold: int = Field(ge=1)
+    skip_failed: bool = True
+    skip_zero_value: bool = True
+
+
+def _load_yaml(path: Path) -> dict[str, Any]:
+    data = yaml.safe_load(path.read_text())
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a mapping")
+    return data
+
+
+def load_graph_params(path: Path = SCORING_CONFIG_PATH) -> GraphParams:
+    data = _load_yaml(path)
+    return GraphParams(max_hops=data["max_hops"], **data["graph"])
