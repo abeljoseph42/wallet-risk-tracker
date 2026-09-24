@@ -17,6 +17,7 @@ from enum import StrEnum
 import httpx
 from pydantic import BaseModel, Field
 
+from app.config import Settings
 from app.core.rate_limiter import TokenBucketRateLimiter
 
 logger = logging.getLogger(__name__)
@@ -268,6 +269,17 @@ def _is_rate_limited(payload: dict[str, object]) -> bool:
     result = payload.get("result")
     return (
         payload.get("status") == "0" and isinstance(result, str) and "rate limit" in result.lower()
+    )
+
+
+def client_from_settings(settings: Settings, http: httpx.AsyncClient) -> EtherscanClient:
+    if not settings.etherscan_api_key:
+        raise EtherscanError("ETHERSCAN_API_KEY is not set")
+    rate = settings.etherscan_rate_limit_per_sec * settings.etherscan_rate_headroom
+    return EtherscanClient(
+        settings.etherscan_api_key,
+        http_client=http,
+        rate_limiter=TokenBucketRateLimiter(rate),
     )
 
 

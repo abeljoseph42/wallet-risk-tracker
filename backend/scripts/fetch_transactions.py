@@ -12,9 +12,8 @@ import sys
 
 import httpx
 
-from app.clients.etherscan import EtherscanClient
+from app.clients.etherscan import client_from_settings
 from app.config import get_settings
-from app.core.rate_limiter import TokenBucketRateLimiter
 from app.db.session import get_engine, get_sessionmaker
 from app.services.cache import TransactionCache
 
@@ -25,11 +24,7 @@ async def main(address: str) -> None:
         sys.exit("ETHERSCAN_API_KEY is not set.")
 
     async with httpx.AsyncClient(timeout=30) as http:
-        client = EtherscanClient(
-            settings.etherscan_api_key,
-            http_client=http,
-            rate_limiter=TokenBucketRateLimiter(settings.etherscan_rate_limit_per_sec),
-        )
+        client = client_from_settings(settings, http)
         cache = TransactionCache(get_sessionmaker(), client, ttl_seconds=settings.cache_ttl_seconds)
         results = await cache.lookup_all(address)
     await get_engine().dispose()

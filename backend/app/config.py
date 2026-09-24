@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     etherscan_api_key: str | None = None
     # Free tier per docs.etherscan.io/rate-limits (checked 2026-09): 3 calls/s, 100k/day.
     etherscan_rate_limit_per_sec: float = 3.0
+    # Send at this fraction of the plan limit. Evenly spaced requests still reach Etherscan
+    # bunched up by network jitter; at 100% a live graph build was throttled 5 times in 49.
+    etherscan_rate_headroom: float = Field(default=0.8, gt=0, le=1)
     balances_api_key: str | None = None
     price_api_key: str | None = None
     # How long a cached transaction history is served before an incremental refresh.
