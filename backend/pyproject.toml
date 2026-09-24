@@ -44,10 +44,10 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "ASYNC", "SIM", "RUF"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["app", "tests", "alembic"]
+files = ["app", "tests", "alembic", "scripts"]
 
 [[tool.mypy.overrides]]
-module = ["networkx", "networkx.*"]
+module = ["networkx", "networkx.*", "asyncpg", "asyncpg.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
