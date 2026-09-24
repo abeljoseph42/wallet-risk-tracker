@@ -99,23 +99,37 @@ async def test_paginates_within_the_10000_record_window() -> None:
     assert [r.url.params["page"] for r in handler.requests] == ["1", "2"]
 
 
-async def test_advances_startblock_past_the_record_window() -> None:
-    # page_size=2, window=4: the client can fetch 2 full pages (4 records)
-    # before it must re-window from the last block seen.
+async def test_rewindows_from_last_block_without_losing_a_split_block() -> None:
+    # page_size=3, window=6: after 2 full pages the client must re-window. The window
+    # ends mid-block (104a read, 104b not yet), so it must restart AT block 104.
     window_one_pages = [
-        _ok([_tx("w1-0", 100), _tx("w1-1", 101)]),
-        _ok([_tx("w1-2", 102), _tx("w1-3", 103)]),
+        _ok([_tx("100", 100), _tx("101", 101), _tx("102", 102)]),
+        _ok([_tx("103", 103), _tx("104", 104), _tx("104a", 104)]),
     ]
-    window_two_page = _ok([_tx("w2-0", 200)])
-    handler = _Handler([*window_one_pages, window_two_page])
-    client = _client(handler, max_record_window=4)
+    window_two_pages = [
+        _ok([_tx("104a", 104), _tx("104b", 104), _tx("200", 200)]),
+        _no_transactions(),
+    ]
+    handler = _Handler([*window_one_pages, *window_two_pages])
+    client = _client(handler, max_record_window=6)
 
-    result = await client.get_normal_transactions("0xabc", page_size=2)
+    result = await client.get_normal_transactions("0xabc", page_size=3)
 
-    assert len(result.transactions) == 5
+    hashes = [t.hash for t in result.transactions]
+    assert hashes == ["0x100", "0x101", "0x102", "0x103", "0x104", "0x104a", "0x104b", "0x200"]
     startblocks = [r.url.params["startblock"] for r in handler.requests]
-    assert startblocks[:2] == ["0"] * 2
-    assert startblocks[2] == "104"
+    assert startblocks == ["0", "0", "104", "104"]
+
+
+async def test_window_entirely_inside_one_block_still_terminates() -> None:
+    same_block = [_ok([_tx("a", 100), _tx("b", 100)]), _ok([_tx("c", 101)])]
+    handler = _Handler(same_block)
+    client = _client(handler, max_record_window=2)
+
+    result = await client.get_normal_transactions("0xabc", startblock=100, page_size=2)
+
+    assert [t.hash for t in result.transactions] == ["0xa", "0xb", "0xc"]
+    assert [r.url.params["startblock"] for r in handler.requests] == ["100", "101"]
 
 
 async def test_raises_on_non_retryable_api_error() -> None:

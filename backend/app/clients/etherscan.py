@@ -4,8 +4,8 @@ Confirmed against docs.etherscan.io (2026-09): base URL is
 `https://api.etherscan.io/v2/api`, chains are selected via `chainid` (1 =
 Ethereum mainnet), and the free tier caps each `txlist` page at 1,000
 records with a hard 10,000-record window per (address, block range) pair.
-To read a full history beyond that window we page within it, then advance
-`startblock` past the last block seen and keep going.
+To read a full history beyond that window we page within it, then restart
+from the last block seen and keep going.
 """
 
 import asyncio
@@ -92,10 +92,11 @@ class EtherscanClient:
         """Return all normal transactions for `address` in [startblock, endblock].
 
         Pages within Etherscan's 10,000-record window using `page`/`offset`,
-        then advances `startblock` past the last block seen to continue
-        reading histories larger than the window.
+        then restarts from the last block seen to continue reading histories
+        larger than the window.
         """
         transactions: list[EtherscanTransaction] = []
+        seen: set[str] = set()
         requests = 0
         window_start = startblock
 
@@ -112,17 +113,30 @@ class EtherscanClient:
                     offset=page_size,
                 )
                 requests += attempts
-                if not batch:
-                    break
-                transactions.extend(batch)
-                last_block_in_window = batch[-1].block_number
+                for tx in batch:
+                    if tx.hash not in seen:
+                        seen.add(tx.hash)
+                        transactions.append(tx)
                 if len(batch) < page_size:
                     return FetchedTransactions(transactions, requests)
+                last_block_in_window = batch[-1].block_number
                 page += 1
 
             if last_block_in_window is None:
                 break
-            window_start = last_block_in_window + 1
+            if last_block_in_window == window_start:
+                # A whole window sits inside one block; block numbers can't page past it.
+                logger.warning(
+                    "Over %d txs for %s in block %d; some may be missing",
+                    self._max_record_window,
+                    address,
+                    window_start,
+                )
+                window_start += 1
+            else:
+                # Restart at the last block, not +1: the window may have ended mid-block.
+                # Re-read transactions are dropped by the `seen` check above.
+                window_start = last_block_in_window
 
         return FetchedTransactions(transactions, requests)
 
