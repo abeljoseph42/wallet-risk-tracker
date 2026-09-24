@@ -21,7 +21,11 @@ from app.db.base import Base
 
 
 class Transaction(Base):
-    """A single normal (external) ETH transfer, as returned by Etherscan's txlist."""
+    """One value transfer: a normal tx, an internal call, or an ERC-20 transfer.
+
+    Keyed by (source_endpoint, hash, sub_key) because one transaction hash can carry
+    several internal calls and token transfers. See `clients.etherscan.Transfer.sub_key`.
+    """
 
     __tablename__ = "transactions"
     __table_args__ = (
@@ -29,15 +33,21 @@ class Transaction(Base):
         Index("ix_transactions_to_addr", "to_addr"),
     )
 
+    source_endpoint: Mapped[str] = mapped_column(String(64), primary_key=True)
     hash: Mapped[str] = mapped_column(String(66), primary_key=True)
+    sub_key: Mapped[str] = mapped_column(String(255), primary_key=True, server_default="")
     from_addr: Mapped[str] = mapped_column(String(42), nullable=False)
     to_addr: Mapped[str] = mapped_column(String(42), nullable=False)
-    # NUMERIC(78,0) holds any uint256 exactly; read back as Decimal, never float.
-    value_wei: Mapped[Decimal] = mapped_column(Numeric(precision=78, scale=0), nullable=False)
+    # Base units of the asset (wei for ETH). NUMERIC(78,0) holds any uint256 exactly;
+    # read back as Decimal, never float.
+    value_raw: Mapped[Decimal] = mapped_column(Numeric(precision=78, scale=0), nullable=False)
+    # NULL for ETH (normal and internal transfers); the token contract otherwise.
+    token_address: Mapped[str | None] = mapped_column(String(42))
+    token_symbol: Mapped[str | None] = mapped_column(String)
+    token_decimals: Mapped[int | None] = mapped_column(Integer)
     block_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
     timestamp: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     is_error: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    source_endpoint: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
 class FetchLog(Base):
@@ -52,7 +62,11 @@ class FetchLog(Base):
         DateTime(timezone=True), nullable=False
     )
     last_block: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # True: read through the chain head as of last_fetched_at. False: a record cap stopped
+    # the read at last_block; a later lookup with a higher cap resumes from there.
     complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Records fetched so far for this (address, endpoint), across incremental reads.
+    record_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
 
 class ApiMetric(Base):
