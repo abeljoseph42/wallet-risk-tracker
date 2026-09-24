@@ -55,3 +55,42 @@ Etherscan facts verified against docs.etherscan.io on 2026-09-24: V2 base URL
   counter, so concurrent lookups don't mix up each other's numbers.
 - **Addresses are stored lowercase.** Format is validated. EIP-55 checksum verification
   is still open, because it needs a Keccak-256 dependency.
+
+## Phase 2: Label ingestion
+
+Ground truth as of the first ingest (2026-09-24): **124** OFAC-sanctioned Ethereum
+addresses (SDN list published 2026-09-23), **309** exchange wallets, and **32** mixer
+contracts. Any address-level overlap between these sets: none.
+
+- **Official OFAC source, legacy `SDN.XML` format.** Downloaded from the Sanctions List
+  Service (`sanctionslistservice.ofac.treas.gov/.../exports/SDN.XML`), which 302-redirects
+  to a short-lived signed S3 URL. `SDN.XML` lists each address as a flat `<id>` with
+  `idType` "Digital Currency Address - ETH". `SDN_ADVANCED.XML` would require resolving
+  feature-type IDs to get the same data. The parser matches elements with a namespace
+  wildcard, so a namespace URL change can't break it silently.
+- **Every Ethereum-format address, not only `- ETH`.** OFAC lists some Ethereum addresses
+  only under a token (USDT, USDC) or another EVM chain (ARB, BSC, ETC). An EVM address is
+  the same private key on every EVM chain, so any `Digital Currency Address - *` value
+  that is a 0x 20-byte address counts. That adds 4 addresses to the 120 tagged ETH.
+- **Tornado Cash is no longer on the SDN list.** Treasury delisted it in 2025; today's list
+  has no Tornado contract addresses. Its pools are therefore labeled `mixer` from the seed,
+  not `sanctioned`. This matters for Phase 6: positives near Tornado measure proximity to
+  a mixer, not to a currently sanctioned address.
+- **Exchange and mixer labels come from Etherscan's name tags,** taken from the
+  `brianleect/etherscan-labels` dump (MIT, pinned to commit `923aba7`, 2023-10-01), and
+  curated by tested rules in `services/label_seeds.py`. Exchange: operational wallets
+  only (numbered hot/cold wallets, deposit funders, old addresses). Mixer: Tornado deposit
+  pools plus Mixer, Proxy, and Router contracts. Token contracts, deployers, fee
+  addresses, DEX routers, and Tornado governance/vesting contracts are excluded, because
+  they aren't where user funds move through. The generated CSV is committed, so the
+  ground truth doesn't change unless someone reruns `build_label_seed.py`. Tradeoff: the
+  dump is from 2023, so exchange wallets created since then are missing.
+- **Composite key `(address, label_type)`.** An address can be both a mixer and
+  sanctioned (Tornado pools were, until 2025). A single-column key would force picking one.
+- **`severity` is an optional override.** `NULL` means "use `scoring.yaml`'s default for the
+  label type", so tuning severities in Phase 6 is a config change, not a data migration.
+- **Ingest syncs a source instead of appending to it.** Each run makes the rows for that
+  `source` exactly match the input: new rows are inserted, changed rows updated (only
+  when their content changed, so a rerun reports 0), and rows the source dropped are
+  deleted. That's how an OFAC delisting takes effect. An empty parse is refused, so an
+  upstream format change can't wipe the table.
