@@ -11,6 +11,7 @@ To read a full history beyond that window we page within it, then advance
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 import httpx
 from pydantic import BaseModel, Field
@@ -37,11 +38,21 @@ class EtherscanTransaction(BaseModel):
     timestamp: int = Field(alias="timeStamp")
     from_address: str = Field(alias="from")
     to_address: str = Field(alias="to")
+    # Set (and `to` empty) when the transaction deployed a contract.
+    contract_address: str = Field(alias="contractAddress", default="")
     value_wei: int = Field(alias="value")
     is_error: bool = Field(alias="isError")
     gas_used: int = Field(alias="gasUsed")
 
     model_config = {"populate_by_name": True}
+
+
+@dataclass(frozen=True)
+class FetchedTransactions:
+    transactions: list[EtherscanTransaction]
+    # HTTP requests sent for this fetch, retries included. Returned per call rather than
+    # kept as a shared counter so concurrent fetches on one client report correctly.
+    request_count: int
 
 
 class EtherscanClient:
@@ -77,7 +88,7 @@ class EtherscanClient:
         startblock: int = 0,
         endblock: int = 99_999_999,
         page_size: int = 1_000,
-    ) -> list[EtherscanTransaction]:
+    ) -> FetchedTransactions:
         """Return all normal transactions for `address` in [startblock, endblock].
 
         Pages within Etherscan's 10,000-record window using `page`/`offset`,
@@ -85,6 +96,7 @@ class EtherscanClient:
         reading histories larger than the window.
         """
         transactions: list[EtherscanTransaction] = []
+        requests = 0
         window_start = startblock
 
         while window_start <= endblock:
@@ -92,26 +104,27 @@ class EtherscanClient:
             last_block_in_window: int | None = None
 
             while page * page_size <= self._max_record_window:
-                batch = await self._fetch_txlist_page(
+                batch, attempts = await self._fetch_txlist_page(
                     address,
                     startblock=window_start,
                     endblock=endblock,
                     page=page,
                     offset=page_size,
                 )
+                requests += attempts
                 if not batch:
                     break
                 transactions.extend(batch)
                 last_block_in_window = batch[-1].block_number
                 if len(batch) < page_size:
-                    return transactions
+                    return FetchedTransactions(transactions, requests)
                 page += 1
 
             if last_block_in_window is None:
                 break
             window_start = last_block_in_window + 1
 
-        return transactions
+        return FetchedTransactions(transactions, requests)
 
     async def _fetch_txlist_page(
         self,
@@ -121,7 +134,7 @@ class EtherscanClient:
         endblock: int,
         page: int,
         offset: int,
-    ) -> list[EtherscanTransaction]:
+    ) -> tuple[list[EtherscanTransaction], int]:
         params: dict[str, str | int] = {
             "chainid": self._chain_id,
             "module": "account",
@@ -134,7 +147,7 @@ class EtherscanClient:
             "sort": "asc",
             "apikey": self._api_key,
         }
-        payload = await self._request(params)
+        payload, attempts = await self._request(params)
 
         status = payload.get("status")
         message = payload.get("message", "")
@@ -142,43 +155,55 @@ class EtherscanClient:
 
         if status == "0":
             if message == _NO_TRANSACTIONS_MESSAGE:
-                return []
+                return [], attempts
             raise EtherscanError(f"Etherscan error for {address}: {message}: {result}")
 
         if not isinstance(result, list):
             raise EtherscanError(f"Unexpected Etherscan payload for {address}: {payload}")
 
-        return [EtherscanTransaction.model_validate(item) for item in result]
+        return [EtherscanTransaction.model_validate(item) for item in result], attempts
 
-    async def _request(self, params: dict[str, str | int]) -> dict[str, object]:
-        last_error: Exception | None = None
-        for attempt in range(self._max_retries):
+    async def _request(self, params: dict[str, str | int]) -> tuple[dict[str, object], int]:
+        """GET with retry; returns the JSON payload and the number of attempts made."""
+        last_error: str = ""
+        for attempt in range(1, self._max_retries + 1):
             await self._rate_limiter.acquire()
             try:
                 response = await self._http.get(self._base_url, params=params)
-                if response.status_code >= 500:
-                    raise httpx.HTTPStatusError(
-                        f"Etherscan returned {response.status_code}",
-                        request=response.request,
-                        response=response,
-                    )
-                response.raise_for_status()
-                data: dict[str, object] = response.json()
-                return data
-            except (httpx.TransportError, httpx.HTTPStatusError) as exc:
-                last_error = exc
-                if attempt == self._max_retries - 1:
-                    break
-                delay = self._backoff_base * (2**attempt)
-                logger.warning(
-                    "Etherscan request failed (attempt %d/%d), retrying in %.2fs: %s",
-                    attempt + 1,
-                    self._max_retries,
-                    delay,
-                    exc,
-                )
-                await self._sleep(delay)
+            except httpx.TransportError as exc:
+                last_error = f"transport error: {exc}"
+            else:
+                if response.status_code >= 500 or response.status_code == 429:
+                    last_error = f"HTTP {response.status_code}"
+                elif response.status_code >= 400:
+                    raise EtherscanError(f"Etherscan returned HTTP {response.status_code}")
+                else:
+                    data: dict[str, object] = response.json()
+                    if not _is_rate_limited(data):
+                        return data, attempt
+                    last_error = f"rate limited: {data.get('result')}"
 
-        raise EtherscanError(f"Etherscan request failed after {self._max_retries} attempts") from (
-            last_error
+            if attempt == self._max_retries:
+                break
+            delay = self._backoff_base * (2 ** (attempt - 1))
+            logger.warning(
+                "Etherscan request failed (attempt %d/%d), retrying in %.2fs: %s",
+                attempt,
+                self._max_retries,
+                delay,
+                last_error,
+            )
+            await self._sleep(delay)
+
+        raise EtherscanError(
+            f"Etherscan request failed after {self._max_retries} attempts: {last_error}"
         )
+
+
+def _is_rate_limited(payload: dict[str, object]) -> bool:
+    # Etherscan signals throttling with HTTP 200, status "0", and a result such as
+    # "Max calls per sec rate limit reached (3/sec)".
+    result = payload.get("result")
+    return (
+        payload.get("status") == "0" and isinstance(result, str) and "rate limit" in result.lower()
+    )

@@ -71,7 +71,8 @@ async def test_returns_empty_list_when_no_transactions_found() -> None:
 
     result = await client.get_normal_transactions("0xabc")
 
-    assert result == []
+    assert result.transactions == []
+    assert result.request_count == 1
 
 
 async def test_parses_transactions_from_a_single_page() -> None:
@@ -80,9 +81,9 @@ async def test_parses_transactions_from_a_single_page() -> None:
 
     result = await client.get_normal_transactions("0xabc")
 
-    assert [t.hash for t in result] == ["0x1", "0x2"]
-    assert result[0].block_number == 100
-    assert result[0].value_wei == 1_000_000_000_000_000_000
+    assert [t.hash for t in result.transactions] == ["0x1", "0x2"]
+    assert result.transactions[0].block_number == 100
+    assert result.transactions[0].value_wei == 1_000_000_000_000_000_000
 
 
 async def test_paginates_within_the_10000_record_window() -> None:
@@ -93,7 +94,8 @@ async def test_paginates_within_the_10000_record_window() -> None:
 
     result = await client.get_normal_transactions("0xabc", page_size=3)
 
-    assert len(result) == 4
+    assert len(result.transactions) == 4
+    assert result.request_count == 2
     assert [r.url.params["page"] for r in handler.requests] == ["1", "2"]
 
 
@@ -110,7 +112,7 @@ async def test_advances_startblock_past_the_record_window() -> None:
 
     result = await client.get_normal_transactions("0xabc", page_size=2)
 
-    assert len(result) == 5
+    assert len(result.transactions) == 5
     startblocks = [r.url.params["startblock"] for r in handler.requests]
     assert startblocks[:2] == ["0"] * 2
     assert startblocks[2] == "104"
@@ -150,8 +152,9 @@ async def test_retries_on_server_error_then_succeeds() -> None:
 
     result = await client.get_normal_transactions("0xabc")
 
-    assert [t.hash for t in result] == ["0x1"]
+    assert [t.hash for t in result.transactions] == ["0x1"]
     assert sleeps == [0.001]
+    assert result.request_count == 2
 
 
 async def test_raises_after_exhausting_retries() -> None:
@@ -178,3 +181,55 @@ async def test_raises_after_exhausting_retries() -> None:
         await client.get_normal_transactions("0xabc")
 
     assert sleeps == [0.001, 0.002]
+
+
+async def test_retries_when_etherscan_reports_rate_limit() -> None:
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    rate_limited: dict[str, object] = {
+        "status": "0",
+        "message": "NOTOK",
+        "result": "Max calls per sec rate limit reached (3/sec)",
+    }
+    handler = _Handler([rate_limited, _ok([_tx("1", 100)])])
+    client = _client(handler, sleep=fake_sleep)
+
+    result = await client.get_normal_transactions("0xabc")
+
+    assert [t.hash for t in result.transactions] == ["0x1"]
+    assert result.request_count == 2
+    assert sleeps == [0.001]
+
+
+async def test_does_not_retry_client_errors() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(400, text="bad request")
+
+    client = EtherscanClient(
+        "fake-key",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        rate_limiter=TokenBucketRateLimiter(rate_per_sec=1000),
+    )
+
+    with pytest.raises(EtherscanError, match="HTTP 400"):
+        await client.get_normal_transactions("0xabc")
+
+    assert calls == 1
+
+
+async def test_contract_creation_exposes_contract_address() -> None:
+    creation = {**_tx("1", 100), "to": "", "contractAddress": "0xnewcontract"}
+    handler = _Handler([_ok([creation])])
+    client = _client(handler)
+
+    result = await client.get_normal_transactions("0xabc")
+
+    assert result.transactions[0].to_address == ""
+    assert result.transactions[0].contract_address == "0xnewcontract"
