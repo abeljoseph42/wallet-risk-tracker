@@ -20,14 +20,16 @@ class TokenBucketRateLimiter:
         self,
         rate_per_sec: float,
         *,
-        burst: float | None = None,
+        burst: float = 1.0,
         clock: Clock = time.monotonic,
         sleep: Sleeper | None = None,
     ) -> None:
         if rate_per_sec <= 0:
             raise ValueError("rate_per_sec must be positive")
         self._rate = rate_per_sec
-        self._capacity = burst if burst is not None else rate_per_sec
+        # Default burst of 1 spaces calls evenly. A burst equal to the rate lets
+        # rate + refill calls land inside one second, which Etherscan rejects.
+        self._capacity = burst
         self._tokens = self._capacity
         self._clock = clock
         self._sleep: Sleeper = sleep if sleep is not None else asyncio.sleep

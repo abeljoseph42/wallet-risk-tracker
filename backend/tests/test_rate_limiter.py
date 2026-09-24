@@ -20,9 +20,7 @@ class FakeClock:
         self.now += seconds
 
 
-def _limiter(
-    rate: float, *, burst: float | None = None
-) -> tuple[TokenBucketRateLimiter, FakeClock]:
+def _limiter(rate: float, *, burst: float = 1.0) -> tuple[TokenBucketRateLimiter, FakeClock]:
     clock = FakeClock()
     limiter = TokenBucketRateLimiter(rate, burst=burst, clock=clock.time, sleep=clock.sleep)
     return limiter, clock
@@ -64,12 +62,10 @@ async def test_rejects_non_positive_rate() -> None:
         TokenBucketRateLimiter(0)
 
 
-async def test_default_burst_equals_rate() -> None:
-    limiter, clock = _limiter(rate=5)
+async def test_default_spaces_calls_evenly_with_no_burst() -> None:
+    limiter, clock = _limiter(rate=3)
 
-    for _ in range(5):
+    for _ in range(4):
         await limiter.acquire()
-    assert clock.slept_for == []
 
-    await limiter.acquire()
-    assert clock.slept_for == [1 / 5]
+    assert clock.slept_for == pytest.approx([1 / 3] * 3)
