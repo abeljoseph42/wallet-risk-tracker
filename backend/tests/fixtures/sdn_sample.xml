@@ -1,0 +1,39 @@
+<?xml version="1.0" standalone="yes"?>
+<!-- Trimmed synthetic sample in the structure of OFAC's SDN.XML (2026-09-23 export).
+     Names and addresses are made up. -->
+<sdnList xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/XML">
+  <publshInformation>
+    <Publish_Date>09/23/2026</Publish_Date>
+    <Record_Count>3</Record_Count>
+  </publshInformation>
+  <sdnEntry>
+    <uid>1001</uid>
+    <firstName>Jane</firstName>
+    <lastName>DOE</lastName>
+    <sdnType>Individual</sdnType>
+    <programList><program>CYBER2</program></programList>
+    <idList>
+      <id><uid>1</uid><idType>Email Address</idType><idNumber>jane@example.com</idNumber></id>
+      <id><uid>2</uid><idType>Digital Currency Address - XBT</idType><idNumber>12aNKp2iDKuhEde2YfPdd4DFGenRUTKupL</idNumber></id>
+      <id><uid>3</uid><idType>Digital Currency Address - ETH</idType><idNumber>0x1111111111111111111111111111111111111111</idNumber></id>
+    </idList>
+  </sdnEntry>
+  <sdnEntry>
+    <uid>1002</uid>
+    <lastName>EXAMPLE MIXER LTD</lastName>
+    <sdnType>Entity</sdnType>
+    <programList><program>CYBER2</program></programList>
+    <idList>
+      <id><uid>4</uid><idType>Digital Currency Address - ETH</idType><idNumber> 0xAbCdEf0000000000000000000000000000000002 </idNumber></id>
+      <id><uid>5</uid><idType>Digital Currency Address - USDT</idType><idNumber>0xabcdef0000000000000000000000000000000002</idNumber></id>
+      <id><uid>6</uid><idType>Digital Currency Address - USDT</idType><idNumber>0x3333333333333333333333333333333333333333</idNumber></id>
+      <id><uid>7</uid><idType>Digital Currency Address - TRX</idType><idNumber>TXsZ2rVQ6nR7qNVfYBsQmYn6hjiPBJYy5A</idNumber></id>
+    </idList>
+  </sdnEntry>
+  <sdnEntry>
+    <uid>1003</uid>
+    <lastName>AEROCARIBBEAN AIRLINES</lastName>
+    <sdnType>Entity</sdnType>
+    <programList><program>CUBA</program></programList>
+  </sdnEntry>
+</sdnList>
