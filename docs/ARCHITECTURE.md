@@ -94,3 +94,84 @@ contracts. Any address-level overlap between these sets: none.
   when their content changed, so a rerun reports 0), and rows the source dropped are
   deleted. That's how an OFAC delisting takes effect. An empty parse is refused, so an
   upstream format change can't wipe the table.
+
+## Phase 3: Graph builder
+
+### Data: internal and token transfers
+
+- **All three transfer types are cached.** Etherscan's `txlist`, `txlistinternal` and
+  `tokentx` (by address, free tier, 1,000 records per page since July 2026). Mixer
+  withdrawals reach the user as *internal* transfers, because the pool contract sends the
+  ETH. A graph built on normal transactions alone would miss exactly the wallets we most
+  want to flag.
+- **One table, keyed by `(source_endpoint, hash, sub_key)`.** One transaction hash can hold
+  several internal calls and token transfers. `sub_key` is the `traceId` for internal
+  transfers. `tokentx` has no log index, so a token transfer's key is
+  token/from/to/value plus an occurrence number for identical transfers in the same
+  transaction. Occurrence numbers restart with each 10,000-record window, and because a
+  window always re-reads its boundary block from the start, the numbering stays consistent.
+  The migration is hand-written so renaming `value_wei` to `value_raw` (base units of the
+  asset) keeps the cached rows.
+- **Record caps with resumable reads.** A lookup can cap how many records it reads. A capped
+  read is stored with `complete=False`. It's served to later lookups whose cap it already
+  meets, and resumed from `last_block` by lookups that need more.
+- **80% of the plan rate limit.** Requests leave evenly spaced, but network jitter bunches
+  them on arrival. At 100%, a 49-call build was throttled 5 times. At 80%, builds of 22
+  and 107 calls were throttled 0 times.
+
+### Traversal: bounded breadth-first search
+
+Starting from the target, BFS expands one hop level at a time, up to `max_hops`
+(default 3). Distance ignores edge direction: receiving from a mixer counts as much as
+sending to one. Edges stay directed for display and scoring.
+
+- **Why BFS.** Scoring needs each flagged address's *shortest* hop distance
+  (`hop_decay^(d-1)`), and BFS finds it directly. Expanding level by level also means
+  that when the budget runs out, it's the farthest (least relevant) addresses that get
+  left out.
+- **Labeled addresses are endpoints.** Exchanges, mixers and sanctioned addresses are
+  recorded but never expanded. Expanding a mixer pool or an exchange would pull in
+  thousands of unrelated users and turn every wallet into a 2-hop neighbor of everything.
+- **Hubs are recorded, not expanded.** An unlabeled address that fills its record cap
+  (`max_records_per_node`, 2,000 per endpoint) or has more than `degree_threshold` (500)
+  counterparties is a hub: DEX routers, token contracts, and exchange wallets missing
+  from our 2023 labels. A hub keeps its edges to nodes already in the graph but adds no
+  new ones, so no path runs *through* it to a newly found address. Neighbors fetch
+  normal transfers first, and if that already shows a hub, the internal and token
+  lookups are skipped, saving two-thirds of the calls on each hub.
+- **Neighbor selection.** Each expansion queues at most `max_neighbors_per_node` (10)
+  unlabeled counterparties, ranked by transfer count, then ETH value. Labeled
+  counterparties are always recorded, since recording them needs no fetch. So the cap
+  can't hide a flagged address that sits one hop from any expanded node. Unlabeled
+  counterparties that won't be expanded aren't added as nodes, just counted
+  (`skipped_neighbors`). Recording them let vitalik.eth's thousands of direct
+  counterparties fill the node limit at hop 1 and starve hops 2 and 3.
+- **Filters.** Failed transfers and zero-value transfers are skipped. Zero-value token
+  transfers are how "address poisoning" plants a lookalike address in a wallet's history.
+  Self-transfers are skipped too. A transfer seen from both of its ends is counted once.
+- **Edges** aggregate `tx_count`, `total_value_wei` (ETH only, normal + internal),
+  `token_transfer_count` and `last_seen`. Token amounts aren't summed into value, because
+  adding raw units of different tokens (or tokens to ETH) is meaningless without prices.
+
+**Complexity.** Let E = `max_expanded_nodes` (100), K = `max_neighbors_per_node` (10),
+R = `max_records_per_node` (2,000), R_t = `max_records_target` (20,000), and P = 1,000
+records per page.
+- API calls on a cold cache: at most 3·⌈R_t/P⌉ + (E−1)·3·⌈R/P⌉ = 60 + 594 = 654
+  (plus retries), about 4.5 minutes at 2.4 calls/s. A hub costs only ⌈R/P⌉ = 2.
+- Work: aggregation is linear in the rows read, at most 3·R_t + 3·E·R ≈ 660k. Graph
+  updates are O(V + E_edges).
+- Size: V ≤ 1 + E·K unlabeled nodes plus labeled ones. `max_nodes` (2,000) is a
+  safety cap.
+
+Measured on live data (2026-09-24):
+
+| Target | Nodes | Expanded | Hubs | API calls | Rate-limit retries | Time |
+|---|---|---|---|---|---|---|
+| Tornado 1 ETH depositor A (cold) | 26 | 15 | 1 | 49 | 5 (before 80% headroom) | 19.6 s |
+| Tornado 1 ETH depositor B (partly cached) | 29 | 19 | 3 | 22 | 0 | 10.9 s |
+| Depositor A again (cached) | 26 | 15 | 1 | 0 | 0 | 0.2 s |
+| vitalik.eth (target history cached) | 273 | 41 | 25 | 107 | 0 | 66.3 s |
+
+Both depositors show three Tornado pools at hop 1. vitalik.eth, a well-known wallet that
+isn't illicit, also has Tornado contracts at hop 1. That's the false-positive case the
+Phase 4 `flow_factor` and the Phase 6 evaluation have to handle.
