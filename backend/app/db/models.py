@@ -1,13 +1,20 @@
-"""ORM models for cached Etherscan data and call metrics.
-
-`address_labels` and `score_runs` arrive in later phases; only the tables
-Phase 1 (Etherscan client + cache layer) needs are defined here.
-"""
+"""ORM models for cached Etherscan data, call metrics, and address labels."""
 
 import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Index, Integer, Numeric, String
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -62,3 +69,34 @@ class ApiMetric(Base):
     upstream_calls: Mapped[int] = mapped_column(Integer, nullable=False)
     # On a hit, the requests a cold fetch of this history would need: one per txlist page.
     calls_avoided: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+
+LABEL_TYPES = ("sanctioned", "malicious", "exchange", "mixer")
+
+
+class AddressLabel(Base):
+    """Ground-truth and exchange labels. One address can carry several label types."""
+
+    __tablename__ = "address_labels"
+    __table_args__ = (
+        CheckConstraint(
+            "label_type IN ('sanctioned', 'malicious', 'exchange', 'mixer')",
+            name="ck_address_labels_label_type",
+        ),
+        CheckConstraint(
+            "severity IS NULL OR (severity >= 0 AND severity <= 1)",
+            name="ck_address_labels_severity",
+        ),
+        Index("ix_address_labels_source", "source"),
+    )
+
+    address: Mapped[str] = mapped_column(String(42), primary_key=True)
+    label_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    # Stable dataset id; re-ingesting a source replaces exactly that source's rows.
+    source: Mapped[str] = mapped_column(String(128), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(256))
+    # Per-address override; NULL means use the label type's default in scoring.yaml.
+    severity: Mapped[float | None] = mapped_column(Float)
+    added_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
