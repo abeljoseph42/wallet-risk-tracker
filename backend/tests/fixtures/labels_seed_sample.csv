@@ -1,0 +1,4 @@
+address,label_type,source,name,severity
+0x4444444444444444444444444444444444444444,exchange,test-seed,Example Exchange 1,
+0x5555555555555555555555555555555555555555,exchange,test-seed,Example Exchange 2,
+0xAbCdEf0000000000000000000000000000000002,mixer,test-seed,Example Mixer: 1 ETH,0.9
