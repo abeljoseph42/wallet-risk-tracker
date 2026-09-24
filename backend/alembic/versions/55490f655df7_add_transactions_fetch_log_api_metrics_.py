@@ -25,6 +25,7 @@ def upgrade() -> None:
     sa.Column('endpoint', sa.String(length=64), nullable=False),
     sa.Column('cache_hit', sa.Boolean(), nullable=False),
     sa.Column('latency_ms', sa.BigInteger(), nullable=False),
+    sa.Column('upstream_calls', sa.Integer(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('fetch_log',

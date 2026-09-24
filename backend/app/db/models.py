@@ -5,8 +5,9 @@ Phase 1 (Etherscan client + cache layer) needs are defined here.
 """
 
 import datetime
+from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Index, Numeric, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Index, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -24,7 +25,8 @@ class Transaction(Base):
     hash: Mapped[str] = mapped_column(String(66), primary_key=True)
     from_addr: Mapped[str] = mapped_column(String(42), nullable=False)
     to_addr: Mapped[str] = mapped_column(String(42), nullable=False)
-    value_wei: Mapped[int] = mapped_column(Numeric(precision=78, scale=0), nullable=False)
+    # NUMERIC(78,0) holds any uint256 exactly; read back as Decimal, never float.
+    value_wei: Mapped[Decimal] = mapped_column(Numeric(precision=78, scale=0), nullable=False)
     block_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
     timestamp: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     is_error: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -47,7 +49,7 @@ class FetchLog(Base):
 
 
 class ApiMetric(Base):
-    """One row per outbound call, used to compute cache-hit rate and calls saved."""
+    """One row per cache lookup, used to compute cache-hit rate and calls saved."""
 
     __tablename__ = "api_metrics"
 
@@ -56,3 +58,5 @@ class ApiMetric(Base):
     endpoint: Mapped[str] = mapped_column(String(64), nullable=False)
     cache_hit: Mapped[bool] = mapped_column(Boolean, nullable=False)
     latency_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # HTTP requests sent to Etherscan for this lookup, retries included (0 on a cache hit).
+    upstream_calls: Mapped[int] = mapped_column(Integer, nullable=False)
