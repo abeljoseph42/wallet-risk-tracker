@@ -10,15 +10,17 @@ from a mixer count as much as funds sent to one). Guardrails, all from scoring.y
 - An unlabeled address whose history hits `max_records_per_node`, or that has more than
   `degree_threshold` counterparties, is a hub. It is recorded with its edges to addresses
   already in the graph, but its other counterparties are not added.
-- At most `max_expanded_nodes` histories are fetched per graph, each expansion queues at
-  most `max_neighbors_per_node` unlabeled counterparties (most active first), and at
-  most `max_nodes` unlabeled addresses are recorded. Labeled addresses are always kept.
+- At most `max_expanded_nodes` histories are fetched per graph, and each expansion queues
+  at most `max_neighbors_per_node` unlabeled counterparties (most active first). Only
+  labeled and queued counterparties become nodes; the rest are counted on the node as
+  `skipped_neighbors`. `max_nodes` caps unlabeled nodes; labeled ones are always kept.
 - Failed and zero-value transfers are skipped.
 """
 
 import datetime
 import logging
 from collections.abc import Iterable, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -153,11 +155,10 @@ class GraphBuilder:
         if not is_root and self._is_hub(truncated, transfers):
             stats.hubs += 1
             node["stop_reason"] = "high_degree"
-            self._add_edges(run, transfers.new_edges, hop + 1, allow_new_nodes=False)
+            self._add_edges(run, transfers.new_edges, hop + 1, keep=frozenset())
             return []
 
-        self._add_edges(run, transfers.new_edges, hop + 1, allow_new_nodes=True)
-        return self._queue_neighbors(run, transfers.activity, hop + 1)
+        return self._add_and_queue(run, address, transfers, hop + 1)
 
     def _is_hub(self, truncated: bool, transfers: _NodeTransfers) -> bool:
         return truncated or len(transfers.activity) > self._params.degree_threshold
@@ -217,6 +218,7 @@ class GraphBuilder:
             truncated=False,
             stop_reason=None,
             queued=False,
+            skipped_neighbors=0,
         )
         return True
 
@@ -226,13 +228,13 @@ class GraphBuilder:
         edges: Mapping[tuple[str, str], _EdgeAgg],
         new_hop: int,
         *,
-        allow_new_nodes: bool,
+        keep: AbstractSet[str],
     ) -> None:
+        """Add `edges`, creating missing endpoints only if they are in `keep`."""
         graph = run.result.graph
         for (src, dst), agg in edges.items():
             if not all(
-                a in graph or (allow_new_nodes and self._add_node(run, a, new_hop))
-                for a in (src, dst)
+                a in graph or (a in keep and self._add_node(run, a, new_hop)) for a in (src, dst)
             ):
                 continue
             if graph.has_edge(src, dst):
@@ -242,28 +244,38 @@ class GraphBuilder:
             else:
                 graph.add_edge(src, dst, **vars(agg))
 
-    def _queue_neighbors(
-        self, run: _Run, activity: Mapping[str, tuple[int, int]], new_hop: int
+    def _add_and_queue(
+        self, run: _Run, address: str, transfers: _NodeTransfers, new_hop: int
     ) -> list[str]:
-        nodes = run.result.graph.nodes
-        present = [n for n in activity if n in nodes]
-        for n in present:
-            if nodes[n]["labels"] and nodes[n]["stop_reason"] is None:
-                nodes[n]["stop_reason"] = "labeled"
+        """Add edges to labeled and to-be-expanded counterparties; return the queue.
 
+        Unlabeled counterparties that won't be expanded are left out of the graph: they
+        can't lead to a flagged address, and recording them let one busy wallet's direct
+        counterparties fill `max_nodes` and starve deeper hops.
+        """
+        graph = run.result.graph
+        nodes = graph.nodes
+        activity = transfers.activity
+        labeled = {n for n in activity if self._labels.get(n)}
         candidates = [
             n
-            for n in present
-            if nodes[n]["hop"] == new_hop and not nodes[n]["labels"] and not nodes[n]["queued"]
+            for n in activity
+            if n not in labeled
+            and (n not in graph or (nodes[n]["hop"] == new_hop and not nodes[n]["queued"]))
         ]
         candidates.sort(key=lambda n: (activity[n], n), reverse=True)
-        limit = self._params.max_neighbors_per_node
-        for n in candidates[:limit]:
+        picked = candidates[: self._params.max_neighbors_per_node]
+
+        self._add_edges(run, transfers.new_edges, new_hop, keep=labeled | set(picked))
+
+        queued = [n for n in picked if n in graph]
+        for n in queued:
             nodes[n].update(queued=True, stop_reason=None)
-        for n in candidates[limit:]:
-            if nodes[n]["stop_reason"] is None:
-                nodes[n]["stop_reason"] = "neighbor_cap"
-        return candidates[:limit]
+        for n in labeled:
+            if n in graph and nodes[n]["stop_reason"] is None:
+                nodes[n]["stop_reason"] = "labeled"
+        nodes[address]["skipped_neighbors"] = len(candidates) - len(queued)
+        return queued
 
 
 def _epoch(ts: datetime.datetime) -> int:

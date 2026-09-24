@@ -213,8 +213,31 @@ async def test_only_the_most_active_neighbors_are_expanded() -> None:
     result = await GraphBuilder(lookup, LABELS, params(max_neighbors_per_node=2)).build(ROOT)
 
     assert lookup.expanded() == {ROOT, a(12), a(13)}
-    assert result.graph.nodes[a(10)]["stop_reason"] == "neighbor_cap"
-    assert result.graph.nodes[a(11)]["stop_reason"] == "neighbor_cap"
+    # Unlabeled neighbors that won't be expanded aren't recorded, only counted.
+    assert a(10) not in result.graph
+    assert result.graph.nodes[ROOT]["skipped_neighbors"] == 2
+
+
+async def test_labeled_neighbors_are_recorded_even_past_the_neighbor_cap() -> None:
+    transfers = [tx(ROOT, a(10 + i)) for i in range(3)] + [tx(ROOT, EXCHANGE)]
+    lookup = FakeLookup(transfers)
+    result = await GraphBuilder(lookup, LABELS, params(max_neighbors_per_node=1)).build(ROOT)
+
+    assert EXCHANGE in result.graph
+    assert result.graph.nodes[EXCHANGE]["stop_reason"] == "labeled"
+
+
+async def test_a_busy_first_hop_does_not_starve_deeper_hops() -> None:
+    # 50 idle neighbors plus one active one that leads to a mixer two hops out.
+    transfers = [tx(ROOT, a(100 + i)) for i in range(50)]
+    transfers += [tx(ROOT, a(2)), tx(ROOT, a(2)), tx(a(2), a(3)), tx(a(3), MIXER)]
+    lookup = FakeLookup(transfers)
+    result = await GraphBuilder(
+        lookup, LABELS, params(max_neighbors_per_node=1, max_nodes=5)
+    ).build(ROOT)
+
+    assert result.graph.nodes[MIXER]["hop"] == 3
+    assert not result.stats.node_limit_reached
 
 
 async def test_expansion_budget_stops_fetching() -> None:
