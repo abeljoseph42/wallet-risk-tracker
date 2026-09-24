@@ -60,3 +60,5 @@ class ApiMetric(Base):
     latency_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
     # HTTP requests sent to Etherscan for this lookup, retries included (0 on a cache hit).
     upstream_calls: Mapped[int] = mapped_column(Integer, nullable=False)
+    # On a hit, the requests a cold fetch of this history would need: one per txlist page.
+    calls_avoided: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")

@@ -25,6 +25,8 @@ ETHEREUM_MAINNET_CHAIN_ID = 1
 
 # Etherscan's documented cap on (page * offset) per (address, block-range) query.
 _MAX_RECORD_WINDOW = 10_000
+# Max records per txlist page on the free tier (Etherscan changelog, July 2026).
+TXLIST_PAGE_SIZE = 1_000
 _NO_TRANSACTIONS_MESSAGE = "No transactions found"
 
 
@@ -87,7 +89,7 @@ class EtherscanClient:
         *,
         startblock: int = 0,
         endblock: int = 99_999_999,
-        page_size: int = 1_000,
+        page_size: int = TXLIST_PAGE_SIZE,
     ) -> FetchedTransactions:
         """Return all normal transactions for `address` in [startblock, endblock].
 

@@ -200,3 +200,20 @@ async def test_every_lookup_is_recorded_and_summarized(
     assert metrics.hit_rate == 0.75
     assert metrics.calls_saved == 3
     assert metrics.call_reduction == 0.75
+
+
+async def test_hit_on_large_history_counts_one_saved_call_per_page(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    history = [_tx(n, 100 + n) for n in range(1, 2_501)]
+    cache = _cache(sessions, FakeEtherscan(history), FakeClock())
+    await cache.get_normal_transactions(WALLET)
+    await cache.get_normal_transactions(WALLET)
+
+    async with sessions() as session:
+        metrics = await summarize_metrics(session)
+
+    # 2,500 cached txs = 3 txlist pages a cold refetch would need.
+    assert metrics.calls_saved == 3
+    assert metrics.upstream_calls == 1
+    assert metrics.call_reduction == 0.75

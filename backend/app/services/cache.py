@@ -7,6 +7,7 @@ advances `fetch_log`. Every lookup writes one `api_metrics` row.
 """
 
 import datetime
+import math
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.clients.etherscan import EtherscanTransaction, FetchedTransactions
+from app.clients.etherscan import TXLIST_PAGE_SIZE, EtherscanTransaction, FetchedTransactions
 from app.core.addresses import normalize_address
 from app.db.models import ApiMetric, FetchLog, Transaction
 
@@ -80,6 +81,9 @@ class TransactionCache:
                 await _record_fetch(session, address, now, last_block)
 
             transactions = await _load_transactions(session, address)
+            calls_avoided = (
+                max(1, math.ceil(len(transactions) / TXLIST_PAGE_SIZE)) if cache_hit else 0
+            )
             session.add(
                 ApiMetric(
                     ts=now,
@@ -87,6 +91,7 @@ class TransactionCache:
                     cache_hit=cache_hit,
                     latency_ms=round((time.perf_counter() - started) * 1000),
                     upstream_calls=upstream_calls,
+                    calls_avoided=calls_avoided,
                 )
             )
             await session.commit()
@@ -157,23 +162,16 @@ class CacheMetrics:
     lookups: int
     hits: int
     upstream_calls: int
+    # Lower bound: pages a cold refetch would need, excluding retries it might also hit.
+    calls_saved: int
 
     @property
     def hit_rate(self) -> float:
         return self.hits / self.lookups if self.lookups else 0.0
 
     @property
-    def calls_saved(self) -> int:
-        """Lower bound: each cache hit avoided at least one Etherscan request.
-
-        A cold fetch of a large history costs one request per 1,000 transactions, so the
-        true saving is usually higher; we report the bound we can defend.
-        """
-        return self.hits
-
-    @property
     def call_reduction(self) -> float:
-        """Share of would-be Etherscan requests avoided (using the calls_saved lower bound)."""
+        """Share of would-be Etherscan requests the cache avoided."""
         would_be = self.calls_saved + self.upstream_calls
         return self.calls_saved / would_be if would_be else 0.0
 
@@ -185,7 +183,10 @@ async def summarize_metrics(session: AsyncSession, endpoint: str = ENDPOINT_TXLI
                 func.count(ApiMetric.id),
                 func.count(ApiMetric.id).filter(ApiMetric.cache_hit),
                 func.coalesce(func.sum(ApiMetric.upstream_calls), 0),
+                func.coalesce(func.sum(ApiMetric.calls_avoided), 0),
             ).where(ApiMetric.endpoint == endpoint)
         )
     ).one()
-    return CacheMetrics(lookups=row[0], hits=row[1], upstream_calls=int(row[2]))
+    return CacheMetrics(
+        lookups=row[0], hits=row[1], upstream_calls=int(row[2]), calls_saved=int(row[3])
+    )

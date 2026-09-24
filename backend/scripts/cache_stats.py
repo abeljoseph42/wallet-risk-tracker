@@ -18,7 +18,7 @@ async def main() -> None:
     print(f"Cache hits:              {m.hits}")
     print(f"Cache hit rate:          {m.hit_rate:.1%}")
     print(f"Etherscan calls made:    {m.upstream_calls}")
-    print(f"Etherscan calls saved:   {m.calls_saved}  (lower bound: 1 per hit)")
+    print(f"Etherscan calls saved:   {m.calls_saved}  (lower bound: txlist pages per hit)")
     print(f"Call reduction:          {m.call_reduction:.1%}")
 
 
