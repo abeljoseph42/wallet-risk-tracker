@@ -5,7 +5,7 @@ import pytest
 
 from app.config import ScoringParams, load_scoring_params
 from app.services.graph import TransactionGraph
-from app.services.scoring import score_graph
+from app.services.scoring import breakdown_json, flagged_subgraph, score_graph
 
 ETH = 10**18
 ROOT = "0x" + "1" * 40
@@ -252,3 +252,26 @@ def test_result_carries_params_hash(params: ScoringParams) -> None:
     result = score_graph(make_graph([(ROOT, A, ETH)]), params)
 
     assert result.params_hash == params.params_hash
+
+
+def test_flagged_subgraph_contains_only_breakdown_paths(params: ScoringParams) -> None:
+    graph = make_graph([(ROOT, A, ETH), (A, SANCTIONED, ETH), (ROOT, B, 2 * ETH)])
+    result = score_graph(graph, params)
+
+    sub = flagged_subgraph(graph, result)
+
+    nodes = {n["address"]: n for n in sub["nodes"]}
+    assert set(nodes) == {ROOT, A, SANCTIONED}
+    assert nodes[ROOT]["role"] == "target"
+    assert nodes[A]["role"] == "path"
+    assert nodes[SANCTIONED]["role"] == "flagged"
+    assert {(e["source"], e["target"]) for e in sub["edges"]} == {(ROOT, A), (A, SANCTIONED)}
+
+
+def test_breakdown_json_stringifies_wei(params: ScoringParams) -> None:
+    result = score_graph(make_graph([(ROOT, SANCTIONED, 10**24)]), params)
+
+    item = breakdown_json(result)[0]
+
+    assert item["bottleneck_eq_wei"] == str(10**24)
+    assert item["address"] == SANCTIONED
