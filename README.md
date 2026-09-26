@@ -3,7 +3,7 @@
 Paste an Ethereum address, get a 0-100 risk score based on transaction-graph proximity to
 sanctioned and known-malicious addresses, plus a portfolio view and a graph of flagged paths.
 
-> Status: Phase 4 (scoring). See `CLAUDE.md` for the full build plan.
+> Status: Phase 5 (API). See `CLAUDE.md` for the full build plan.
 
 ## Run locally
 
@@ -13,7 +13,17 @@ docker compose up --build
 ```
 
 - Frontend: http://localhost:5173 (shows backend health)
-- Backend: http://localhost:8000/health, API docs at http://localhost:8000/docs
+- API docs: http://localhost:8000/docs
+
+Score a wallet (the job runs in the background; poll until `done`):
+
+```bash
+curl -s -X POST localhost:8000/api/v1/scores -H 'content-type: application/json' \
+  -d '{"address": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"}'
+curl -s localhost:8000/api/v1/scores/<id>
+```
+
+Labels must be loaded once first (see Scripts: `ingest_ofac.py`, `ingest_labels.py`).
 
 ## Scripts
 
