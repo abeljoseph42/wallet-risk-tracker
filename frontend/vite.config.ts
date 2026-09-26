@@ -10,10 +10,10 @@ export default defineConfig({
     host: true,
     port: 5173,
     proxy: {
+      // Backend routes live under /api/v1, so paths pass through unchanged.
       "/api": {
         target: apiTarget,
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ""),
       },
     },
   },

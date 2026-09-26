@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     price_api_key: str | None = None
     # How long a cached transaction history is served before an incremental refresh.
     cache_ttl_seconds: int = 3600
+    # Scoring jobs (Phase 5). They share one Etherscan rate limit, so few run at once.
+    score_job_timeout_seconds: int = Field(default=300, gt=0)
+    score_max_concurrent_jobs: int = Field(default=2, ge=1)
+    # A finished score for the same address and params is returned instead of recomputed.
+    score_reuse_seconds: int = Field(default=3600, ge=0)
     log_level: str = "INFO"
     # Comma-separated list, e.g. "http://localhost:5173,https://example.com".
     cors_origins: str = "http://localhost:5173"

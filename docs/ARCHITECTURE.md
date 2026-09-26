@@ -200,3 +200,53 @@ The formula, parameters and worked examples are in [SCORING.md](SCORING.md). Dec
 - **Node volume is recorded during graph building.** The flow denominator must include
   transfers to counterparties that were never added to the graph; otherwise shares would
   be inflated.
+
+## Phase 5: API
+
+| Method | Path | Returns |
+|---|---|---|
+| `POST` | `/api/v1/scores` `{"address": ...}` | 202 with a job (`pending`); 200 if a recent finished result is reused; 422 for a bad address or checksum; 503 if no Etherscan key |
+| `GET` | `/api/v1/scores/{id}` | The job: status, then `result` (score, bucket, breakdown, flagged subgraph, traversal stats) or `error` (code + message); 404 if unknown |
+| `GET` | `/api/v1/wallets/{address}/scores` | That wallet's runs, newest first |
+| `GET` | `/api/v1/health` | Liveness + database check |
+
+Interactive docs: `http://localhost:8000/docs`.
+
+- **Background job plus polling, not a blocking request.** A cold score makes up to
+  hundreds of rate-limited Etherscan calls. Live: 23.6 s and 51 calls for a Tornado
+  depositor. Load balancers commonly cut idle requests at about 60 s, and a job lets the
+  UI show progress. `POST` returns 202 with a `Location` header, and the client polls.
+- **Jobs are asyncio tasks inside the API process, with state in Postgres (`score_runs`).**
+  No queue infrastructure for a single-instance demo. Tradeoffs: a restart loses
+  in-flight jobs, so startup marks them `failed` with code `interrupted` and clients can
+  resubmit. Jobs also can't be spread across processes. The next step would be Redis
+  plus an `arq` worker, and the `ScoreJobs` interface would stay the same.
+- **One Etherscan client per process, at most 2 concurrent jobs.** All jobs share one
+  rate limiter, so running more at once would only make them wait on each other. The
+  rest queue as `pending`.
+- **Reuse and dedupe.** A submit for the same address and params hash returns a finished
+  run from the last hour (`SCORE_REUSE_SECONDS`) or the job already in progress. An
+  in-process lock makes the check-then-insert atomic, so two identical requests arriving
+  together start one job.
+- **Failures are data, not 500s.** A job that fails ends `failed` with an error code:
+  `upstream_rate_limited` (still throttled after retries), `upstream_unavailable`
+  (transport errors or 5xx), `upstream_error`, `timeout` (`SCORE_JOB_TIMEOUT_SECONDS`,
+  default 300), `interrupted` or `internal`. The client from Phase 1 already classifies
+  the Etherscan errors.
+- **Only the flagged subgraph is returned,** meaning the nodes and edges on the
+  breakdown's paths, not the whole traversal (which can be hundreds of nodes). Wei
+  amounts are decimal strings, because they exceed JavaScript's 2^53 safe-integer range.
+- **Every run is stored** with its params hash, so any past score can be traced to the
+  exact parameters that produced it.
+- **EIP-55 checksum validation** for mixed-case input uses pycryptodome's Keccak-256,
+  tested against the spec's vectors. All-lowercase and all-uppercase input is accepted,
+  as the spec intends.
+- **Everything the frontend calls lives under `/api/v1`,** and the dev proxy passes
+  paths through unchanged. Phase 0's proxy stripped `/api`, which broke the versioned
+  routes.
+
+The integration tests (`tests/test_api_scores.py`) run the real app against Postgres
+and a mocked Etherscan. They cover dedupe of simultaneous submits, result reuse with
+zero upstream calls, invalid addresses and checksums, persistent rate limiting,
+outages, timeouts, a missing API key, history, restart recovery, and the OpenAPI
+contract.

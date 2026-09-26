@@ -81,7 +81,7 @@ jobs:
       - name: Backend health
         run: curl -fsS http://localhost:8000/health
       - name: Health via frontend proxy
-        run: curl -fsS http://localhost:5173/api/health
+        run: curl -fsS http://localhost:5173/api/v1/health
       - name: Logs on failure
         if: failure()
         run: docker compose logs

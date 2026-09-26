@@ -50,7 +50,7 @@ services:
         condition: service_healthy
     healthcheck:
       # Goes through the Vite proxy, so it proves frontend -> backend -> db end to end.
-      test: ["CMD", "wget", "-qO-", "http://localhost:5173/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:5173/api/v1/health"]
       interval: 3s
       timeout: 3s
       retries: 20

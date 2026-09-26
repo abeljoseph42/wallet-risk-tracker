@@ -20,6 +20,7 @@ discount never penalizes a wallet that also has an equally short clean path.
 import itertools
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Literal, TypedDict
 
 import networkx as nx
 
@@ -193,3 +194,79 @@ def _bucket(score: float, params: ScoringParams) -> str:
         if score >= lower:
             return name
     return "low"
+
+
+def breakdown_json(result: ScoreResult) -> list[dict[str, object]]:
+    """Breakdown as JSON-safe dicts. Wei amounts are strings: they exceed 2^53."""
+    return [
+        {**vars(item), "bottleneck_eq_wei": str(item.bottleneck_eq_wei)}
+        for item in result.breakdown
+    ]
+
+
+class SubgraphNode(TypedDict):
+    address: str
+    role: Literal["target", "flagged", "path"]
+    labels: list[str]
+    hop: int | None
+    is_hub: bool
+
+
+class SubgraphEdge(TypedDict):
+    source: str
+    target: str
+    tx_count: int
+    token_transfer_count: int
+    total_value_wei: str
+    value_eq_wei: str
+    last_seen: int | None
+
+
+class Subgraph(TypedDict):
+    nodes: list[SubgraphNode]
+    edges: list[SubgraphEdge]
+
+
+def flagged_subgraph(graph: TransactionGraph, result: ScoreResult) -> Subgraph:
+    """Only the nodes and edges on the breakdown's paths, JSON-safe, for display."""
+    g = graph.graph
+    flagged = {item.address for item in result.breakdown}
+    on_path: dict[str, None] = {}
+    pairs: dict[tuple[str, str], None] = {}
+    for item in result.breakdown:
+        on_path.update(dict.fromkeys(item.path))
+        for u, v in itertools.pairwise(item.path):
+            for a, b in ((u, v), (v, u)):
+                if g.has_edge(a, b):
+                    pairs[(a, b)] = None
+
+    nodes: list[SubgraphNode] = []
+    for address in on_path:
+        data = g.nodes[address]
+        role: Literal["target", "flagged", "path"] = (
+            "target" if address == graph.root else "flagged" if address in flagged else "path"
+        )
+        nodes.append(
+            {
+                "address": address,
+                "role": role,
+                "labels": list(data["labels"]),
+                "hop": data.get("hop"),
+                "is_hub": data.get("stop_reason") == "high_degree",
+            }
+        )
+    edges: list[SubgraphEdge] = []
+    for a, b in pairs:
+        data = g.edges[a, b]
+        edges.append(
+            {
+                "source": a,
+                "target": b,
+                "tx_count": data.get("tx_count", 0),
+                "token_transfer_count": data.get("token_transfer_count", 0),
+                "total_value_wei": str(data.get("total_value_wei", 0)),
+                "value_eq_wei": str(data.get("value_eq_wei", 0)),
+                "last_seen": data.get("last_seen"),
+            }
+        )
+    return {"nodes": nodes, "edges": edges}
