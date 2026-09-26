@@ -15,6 +15,9 @@ from a mixer count as much as funds sent to one). Guardrails, all from scoring.y
   labeled and queued counterparties become nodes; the rest are counted on the node as
   `skipped_neighbors`. `max_nodes` caps unlabeled nodes; labeled ones are always kept.
 - Failed and zero-value transfers are skipped.
+
+Edges carry ETH value (`total_value_wei`) and ETH-equivalent value including valued
+tokens (`value_eq_wei`); expanded nodes carry their total volume (`volume_eq_wei`).
 """
 
 import datetime
@@ -31,6 +34,7 @@ from app.config import GraphParams
 from app.core.addresses import normalize_address
 from app.db.models import Transaction
 from app.services.cache import CacheLookup
+from app.services.valuation import Valuer, eth_only
 
 logger = logging.getLogger(__name__)
 
@@ -68,13 +72,17 @@ class TransactionGraph:
 @dataclass
 class _EdgeAgg:
     tx_count: int = 0
+    # ETH only (normal + internal transfers).
     total_value_wei: int = 0
+    # ETH plus valued tokens (stablecoins), in ETH-equivalent wei. Used for flow.
+    value_eq_wei: int = 0
     token_transfer_count: int = 0
     last_seen: int = 0
 
     def add(self, other: "_EdgeAgg") -> None:
         self.tx_count += other.tx_count
         self.total_value_wei += other.total_value_wei
+        self.value_eq_wei += other.value_eq_wei
         self.token_transfer_count += other.token_transfer_count
         self.last_seen = max(self.last_seen, other.last_seen)
 
@@ -86,8 +94,12 @@ class _NodeTransfers:
 
     new_edges: dict[tuple[str, str], _EdgeAgg] = field(default_factory=dict)
     activity: dict[str, tuple[int, int]] = field(default_factory=dict)
+    # Total in+out value over all kept transfers, including counterparties that are
+    # never added to the graph. The denominator for flow shares.
+    volume_eq_wei: int = 0
 
     def merge(self, other: "_NodeTransfers") -> None:
+        self.volume_eq_wei += other.volume_eq_wei
         for key, agg in other.new_edges.items():
             self.new_edges.setdefault(key, _EdgeAgg()).add(agg)
         for address, (count, value) in other.activity.items():
@@ -105,10 +117,17 @@ class _Run:
 
 
 class GraphBuilder:
-    def __init__(self, lookup: TransferLookup, labels: LabelIndex, params: GraphParams) -> None:
+    def __init__(
+        self,
+        lookup: TransferLookup,
+        labels: LabelIndex,
+        params: GraphParams,
+        valuer: Valuer = eth_only,
+    ) -> None:
         self._lookup = lookup
         self._labels = labels
         self._params = params
+        self._value = valuer
 
     async def build(self, root: str) -> TransactionGraph:
         root = normalize_address(root)
@@ -151,7 +170,12 @@ class GraphBuilder:
                 transfers.merge(self._collect(run, address, more))
         stats.expanded += 1
 
-        node.update(expanded=True, degree=len(transfers.activity), truncated=truncated)
+        node.update(
+            expanded=True,
+            degree=len(transfers.activity),
+            truncated=truncated,
+            volume_eq_wei=transfers.volume_eq_wei,
+        )
         if not is_root and self._is_hub(truncated, transfers):
             stats.hubs += 1
             node["stop_reason"] = "high_degree"
@@ -183,6 +207,8 @@ class GraphBuilder:
                 continue
             is_eth = row.token_address is None
             eth_value = int(row.value_raw) if is_eth else 0
+            eq_value = self._value(row.token_address, int(row.value_raw))
+            out.volume_eq_wei += eq_value
             other = row.to_addr if row.from_addr == address else row.from_addr
             count, value = out.activity.get(other, (0, 0))
             out.activity[other] = (count + 1, value + eth_value)
@@ -196,6 +222,7 @@ class GraphBuilder:
                 _EdgeAgg(
                     tx_count=1,
                     total_value_wei=eth_value,
+                    value_eq_wei=eq_value,
                     token_transfer_count=0 if is_eth else 1,
                     last_seen=_epoch(row.timestamp),
                 )
@@ -216,6 +243,7 @@ class GraphBuilder:
             expanded=False,
             degree=None,
             truncated=False,
+            volume_eq_wei=None,
             stop_reason=None,
             queued=False,
             skipped_neighbors=0,

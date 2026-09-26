@@ -298,3 +298,28 @@ async def test_stats_count_lookups_and_api_calls() -> None:
 async def test_rejects_invalid_root_address() -> None:
     with pytest.raises(ValueError):
         await GraphBuilder(FakeLookup([]), LABELS, params()).build("0x123")
+
+
+async def test_valuer_prices_edges_and_node_volume_includes_skipped_neighbors() -> None:
+    stable = a(777)  # the token address tx() uses for token transfers
+
+    def valuer(token_address: str | None, value_raw: int) -> int:
+        if token_address is None:
+            return value_raw
+        return value_raw * 2 if token_address == stable else 0
+
+    transfers = [tx(ROOT, a(2), value=10), tx(ROOT, a(2), value=3, endpoint=Endpoint.TOKEN)]
+    transfers += [tx(ROOT, a(3), value=1), tx(a(4), ROOT, value=100)]
+    lookup = FakeLookup(transfers)
+    result = await GraphBuilder(
+        lookup, LABELS, params(max_neighbors_per_node=1), valuer=valuer
+    ).build(ROOT)
+
+    # a(2) is the most active neighbor (2 transfers), so a(3) and a(4) are skipped...
+    assert a(3) not in result.graph
+    assert a(4) not in result.graph
+    edge = result.graph.edges[ROOT, a(2)]
+    assert edge["total_value_wei"] == 10
+    assert edge["value_eq_wei"] == 10 + 6
+    # ...but the root's volume still counts every transfer, skipped neighbors included.
+    assert result.graph.nodes[ROOT]["volume_eq_wei"] == 10 + 6 + 1 + 100
