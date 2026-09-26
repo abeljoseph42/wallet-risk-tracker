@@ -3,7 +3,7 @@
 Paste an Ethereum address, get a 0-100 risk score based on transaction-graph proximity to
 sanctioned and known-malicious addresses, plus a portfolio view and a graph of flagged paths.
 
-> Status: Phase 3 (graph builder). See `CLAUDE.md` for the full build plan.
+> Status: Phase 4 (scoring). See `CLAUDE.md` for the full build plan.
 
 ## Run locally
 
@@ -25,6 +25,7 @@ docker compose run --rm backend python scripts/cache_stats.py                   
 docker compose run --rm backend python scripts/ingest_ofac.py                   # OFAC SDN -> sanctioned
 docker compose run --rm backend python scripts/ingest_labels.py                 # exchange/mixer seed
 docker compose run --rm backend python scripts/build_graph.py 0xADDRESS         # BFS graph + flagged addresses
+docker compose run --rm backend python scripts/score_address.py 0xADDRESS       # risk score + breakdown
 ```
 
 Label ingests are idempotent syncs; rerun them anytime. `scripts/build_label_seed.py`

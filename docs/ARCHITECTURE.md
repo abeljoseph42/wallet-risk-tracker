@@ -175,3 +175,28 @@ Measured on live data (2026-09-24):
 Both depositors show three Tornado pools at hop 1. vitalik.eth, a well-known wallet that
 isn't illicit, also has Tornado contracts at hop 1. That's the false-positive case the
 Phase 4 `flow_factor` and the Phase 6 evaluation have to handle.
+
+## Phase 4: Scoring
+
+The formula, parameters and worked examples are in [SCORING.md](SCORING.md). Decisions:
+
+- **Flow = saturating share of the target's volume, measured at the path's bottleneck.**
+  Absolute amounts would score a whale's small mixer use like a small wallet's entire
+  balance. A raw share would under-score a wallet that moved 20% of its funds through a
+  mixer. Live effect: vitalik.eth scores 6.32 despite three Tornado contracts at hop 1,
+  while two ordinary Tornado depositors score about 74.
+- **No discount for incoming-only links.** Mixer withdrawals are incoming-only, so a
+  direction discount would weaken the main signal. Unsolicited dust and spam tokens are
+  handled by value instead: dust gets a tiny share, and unpriced tokens are worth 0.
+- **Stablecoins at $1 with a pinned ETH price.** Tornado has USDT, USDC and DAI pools, so
+  ETH-only value would miss them. A live price feed would make scores (and evaluation
+  results) change from day to day; the pinned rate keeps them reproducible.
+- **Strongest path wins.** Scoring the best of all shortest paths and shortest
+  exchange-free paths means exchange handling only lowers scores when *every* short route
+  goes through an exchange or hub.
+- **The params hash is computed from the validated model, not the YAML text.** So
+  evaluation variants built in code, like exchange handling off, get distinct hashes.
+  Comments and key order in the YAML don't change it.
+- **Node volume is recorded during graph building.** The flow denominator must include
+  transfers to counterparties that were never added to the graph; otherwise shares would
+  be inflated.
