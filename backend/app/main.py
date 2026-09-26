@@ -75,7 +75,9 @@ def create_app(score_jobs: ScoreJobs | None = None) -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
-    app.include_router(health_router)
+    # /api/v1/health is the public route; bare /health stays for container healthchecks.
+    app.include_router(health_router, prefix="/api/v1")
+    app.include_router(health_router, include_in_schema=False)
     app.include_router(scores_router)
     return app
 
