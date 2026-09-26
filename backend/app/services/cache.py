@@ -42,6 +42,15 @@ class TransferSource(Protocol):
 
 
 @dataclass(frozen=True)
+class Snapshot:
+    """A fixed point in chain history. Lookups under a snapshot only need the history up to
+    `block`; the evaluation pins one so reruns see identical data and make no API calls."""
+
+    block: int
+    time: datetime.datetime
+
+
+@dataclass(frozen=True)
 class CacheLookup:
     transactions: list[Transaction]
     cache_hit: bool
@@ -74,6 +83,7 @@ class TransactionCache:
         endpoint: Endpoint = Endpoint.NORMAL,
         *,
         max_records: int | None = None,
+        snapshot: Snapshot | None = None,
     ) -> CacheLookup:
         address = normalize_address(address)
         started = time.perf_counter()
@@ -81,9 +91,12 @@ class TransactionCache:
         async with self._sessions() as session:
             log = await session.get(FetchLog, (address, endpoint.value))
             now = self._now()
-            cache_hit = log is not None and _serves(
-                log, now - log.last_fetched_at, self._ttl, max_records
-            )
+            if log is None:
+                cache_hit = False
+            elif snapshot is not None:
+                cache_hit = _covers(log, snapshot, max_records)
+            else:
+                cache_hit = _serves(log, now - log.last_fetched_at, self._ttl, max_records)
             upstream_calls = 0
             truncated = log is not None and not log.complete
 
@@ -129,11 +142,14 @@ class TransactionCache:
         return CacheLookup(transactions, cache_hit, upstream_calls, truncated)
 
     async def lookup_all(
-        self, address: str, *, max_records: int | None = None
+        self, address: str, *, max_records: int | None = None, snapshot: Snapshot | None = None
     ) -> dict[Endpoint, CacheLookup]:
         """Normal, internal and token transfers for `address` (one lookup per endpoint)."""
         results = await asyncio.gather(
-            *(self.lookup(address, endpoint, max_records=max_records) for endpoint in Endpoint)
+            *(
+                self.lookup(address, endpoint, max_records=max_records, snapshot=snapshot)
+                for endpoint in Endpoint
+            )
         )
         return dict(zip(Endpoint, results, strict=True))
 
@@ -147,6 +163,17 @@ def _serves(
         return True
     # A capped read satisfies any lookup whose own cap it already met.
     return max_records is not None and log.record_count >= max_records
+
+
+def _covers(log: FetchLog, snapshot: Snapshot, max_records: int | None) -> bool:
+    """Whether the cached history already contains everything up to the snapshot (or, for a
+    capped lookup, at least `max_records` transfers from before it). TTL doesn't matter:
+    history before a fixed block never changes."""
+    if log.complete and log.last_fetched_at >= snapshot.time:
+        return True
+    if log.last_block >= snapshot.block:
+        return True
+    return not log.complete and max_records is not None and log.record_count >= max_records
 
 
 async def _upsert_transfers(session: AsyncSession, transfers: Sequence[Transfer]) -> None:

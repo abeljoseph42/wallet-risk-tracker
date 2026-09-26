@@ -9,7 +9,7 @@ import pytest
 from app.clients.etherscan import Endpoint
 from app.config import GraphParams
 from app.db.models import Transaction
-from app.services.cache import CacheLookup
+from app.services.cache import CacheLookup, Snapshot
 from app.services.graph import GraphBuilder, LabelIndex
 
 _hashes = itertools.count(1)
@@ -33,6 +33,7 @@ def tx(
     endpoint: Endpoint = Endpoint.NORMAL,
     is_error: bool = False,
     ts: int = 1_700_000_000,
+    block: int = 1,
 ) -> Transaction:
     return Transaction(
         source_endpoint=endpoint.value,
@@ -44,7 +45,7 @@ def tx(
         token_address=a(777) if endpoint is Endpoint.TOKEN else None,
         token_symbol=None,
         token_decimals=None,
-        block_number=1,
+        block_number=block,
         timestamp=datetime.datetime.fromtimestamp(ts, datetime.UTC),
         is_error=is_error,
     )
@@ -56,7 +57,12 @@ class FakeLookup:
         self.calls: list[tuple[str, Endpoint]] = []
 
     async def lookup(
-        self, address: str, endpoint: Endpoint = Endpoint.NORMAL, *, max_records: int | None = None
+        self,
+        address: str,
+        endpoint: Endpoint = Endpoint.NORMAL,
+        *,
+        max_records: int | None = None,
+        snapshot: Snapshot | None = None,
     ) -> CacheLookup:
         self.calls.append((address, endpoint))
         rows = [
@@ -323,3 +329,28 @@ async def test_valuer_prices_edges_and_node_volume_includes_skipped_neighbors() 
     assert edge["value_eq_wei"] == 10 + 6
     # ...but the root's volume still counts every transfer, skipped neighbors included.
     assert result.graph.nodes[ROOT]["volume_eq_wei"] == 10 + 6 + 1 + 100
+
+
+async def test_snapshot_ignores_transfers_after_its_block() -> None:
+    lookup = FakeLookup([tx(ROOT, a(2), block=10), tx(ROOT, SANCTIONED, block=11)])
+    snapshot = Snapshot(block=10, time=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC))
+    result = await GraphBuilder(lookup, LABELS, params(), snapshot=snapshot).build(ROOT)
+
+    assert a(2) in result.graph
+    assert SANCTIONED not in result.graph
+
+
+async def test_snapshot_caps_the_oldest_transfers_deterministically() -> None:
+    busy = a(60)
+    later = [tx(busy, a(3000 + i), block=50 + i) for i in range(3)]
+    lookup = FakeLookup([tx(ROOT, busy, block=1), tx(busy, a(2000), block=2), *later])
+    snapshot = Snapshot(block=100, time=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC))
+    result = await GraphBuilder(
+        lookup, LABELS, params(max_records_per_node=2), snapshot=snapshot
+    ).build(ROOT)
+
+    node = result.graph.nodes[busy]
+    assert node["truncated"]
+    assert node["stop_reason"] == "high_degree"
+    # Degree is measured on the capped (oldest two) transfers only.
+    assert node["degree"] == 2
