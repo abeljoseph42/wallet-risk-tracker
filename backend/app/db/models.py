@@ -1,6 +1,7 @@
 """ORM models for cached Etherscan data, call metrics, and address labels."""
 
 import datetime
+import uuid
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -13,8 +14,11 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
+    Uuid,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -114,3 +118,37 @@ class AddressLabel(Base):
     added_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+SCORE_RUN_STATUSES = ("pending", "running", "done", "failed")
+
+
+class ScoreRun(Base):
+    """One scoring request: the job's state while it runs, then its full result."""
+
+    __tablename__ = "score_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'done', 'failed')", name="ck_score_runs_status"
+        ),
+        # Serves "latest run for this address and params" (reuse) and history listings.
+        Index("ix_score_runs_address_params_created", "address", "params_hash", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    address: Mapped[str] = mapped_column(String(42), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    params_hash: Mapped[str] = mapped_column(String(12), nullable=False)
+    score: Mapped[float | None] = mapped_column(Float)
+    bucket: Mapped[str | None] = mapped_column(String(16))
+    # Flagged-address breakdown, flagged subgraph (nodes/edges) and traversal stats.
+    breakdown_json: Mapped[list[dict[str, object]] | None] = mapped_column(JSONB)
+    graph_json: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    stats_json: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    error_code: Mapped[str | None] = mapped_column(String(32))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    started_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
