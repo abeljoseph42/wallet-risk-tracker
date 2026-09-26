@@ -1,11 +1,13 @@
 """Application settings (environment / `.env`) and tunable parameters (`config/*.yaml`)."""
 
+import hashlib
+import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -69,3 +71,78 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 def load_graph_params(path: Path = SCORING_CONFIG_PATH) -> GraphParams:
     data = _load_yaml(path)
     return GraphParams(max_hops=data["max_hops"], **data["graph"])
+
+
+class _Strict(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class Severity(_Strict):
+    sanctioned: float = Field(ge=0, le=1)
+    malicious: float = Field(ge=0, le=1)
+    mixer: float = Field(ge=0, le=1)
+
+
+class ExchangeHandling(_Strict):
+    enabled: bool
+    mode: Literal["discount", "cut"]
+    exchange_discount: float = Field(ge=0, le=1)
+
+
+class Buckets(_Strict):
+    low: float
+    medium: float
+    high: float
+    severe: float
+
+    @model_validator(mode="after")
+    def _ascending(self) -> "Buckets":
+        if not 0 <= self.low <= self.medium <= self.high <= self.severe <= 100:
+            raise ValueError("bucket lower bounds must ascend within [0, 100]")
+        return self
+
+
+class Flow(_Strict):
+    share_saturation: float = Field(gt=0, le=1)
+
+
+class Stablecoin(_Strict):
+    symbol: str
+    decimals: int = Field(ge=0, le=36)
+
+
+class Valuation(_Strict):
+    usd_per_eth: float = Field(gt=0)
+    stablecoins: dict[str, Stablecoin]
+
+    @field_validator("stablecoins")
+    @classmethod
+    def _lowercase(cls, value: dict[str, Stablecoin]) -> dict[str, Stablecoin]:
+        return {address.lower(): coin for address, coin in value.items()}
+
+
+class ScoringParams(_Strict):
+    max_hops: int = Field(ge=1, le=6)
+    hop_decay: float = Field(gt=0, le=1)
+    severity: Severity
+    exchange_handling: ExchangeHandling
+    buckets: Buckets
+    flow: Flow
+    valuation: Valuation
+    graph: GraphParams
+
+    @property
+    def params_hash(self) -> str:
+        """Short sha256 of the canonical parameters, reported with every score.
+
+        Computed from the validated model (not the YAML text), so variants built in code,
+        e.g. exchange handling switched off for an evaluation run, get their own hash.
+        """
+        canonical = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode()).hexdigest()[:12]
+
+
+def load_scoring_params(path: Path = SCORING_CONFIG_PATH) -> ScoringParams:
+    data = _load_yaml(path)
+    graph = GraphParams(max_hops=data["max_hops"], **data["graph"])
+    return ScoringParams(**{**data, "graph": graph})

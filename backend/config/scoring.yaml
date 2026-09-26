@@ -1,11 +1,14 @@
 # Scoring parameters (CLAUDE.md section 7). Starting defaults, to be tuned with the
-# Phase 6 evaluation harness. Loaded and validated in Phase 4.
+# Phase 6 evaluation harness. Every key here is part of the params hash in score output.
 max_hops: 3
 hop_decay: 0.5
 severity:
   sanctioned: 1.0
   malicious: 0.8
   mixer: 0.7
+# Paths through a labeled exchange or a high-degree hub: multiply by exchange_discount
+# ("discount") or drop the path ("cut"). `enabled: false` lets the evaluation measure
+# the effect of this rule.
 exchange_handling:
   enabled: true
   mode: discount        # "discount" or "cut"
@@ -16,8 +19,23 @@ buckets:                # lower bounds, inclusive
   high: 50
   severe: 75
 
+# flow_factor = min(1, share / share_saturation), where share = the path's bottleneck
+# value / the target's total in+out volume. 10% of volume through a path = full weight.
+flow:
+  share_saturation: 0.10
+
+# Values are compared in ETH-equivalent wei. ETH counts at face value; the stablecoins
+# below count at $1 and convert at a fixed usd_per_eth so results are reproducible.
+# Any other token contributes 0 value (this also neutralizes spam-token airdrops).
+valuation:
+  usd_per_eth: 2685.59        # Etherscan stats/ethprice, 2026-09-25
+  stablecoins:                # contract names verified via Etherscan getsourcecode, 2026-09-25
+    "0xdac17f958d2ee523a2206206994597c13d831ec7": {symbol: USDT, decimals: 6}   # TetherToken
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": {symbol: USDC, decimals: 6}   # FiatTokenProxy
+    "0x6b175474e89094c44da98b954eedeac495271d0f": {symbol: DAI, decimals: 18}   # Dai
+
 # Graph builder (Phase 3). Traversal limits change which flagged addresses are found,
-# so they live here with the scoring parameters and will be part of the params hash.
+# so they live here with the scoring parameters and are part of the params hash.
 graph:
   max_expanded_nodes: 100      # addresses whose history is fetched, per graph
   max_neighbors_per_node: 10   # unlabeled counterparties queued per expansion (most active first)
