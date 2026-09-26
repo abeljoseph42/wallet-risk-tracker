@@ -255,3 +255,13 @@ async def load_label_index(session: AsyncSession) -> dict[str, frozenset[str]]:
     for address, label_type in rows.all():
         index.setdefault(address, set()).add(label_type)
     return {address: frozenset(types) for address, types in index.items()}
+
+
+async def load_severity_overrides(session: AsyncSession) -> dict[tuple[str, str], float]:
+    """Per-address severities that replace the label type's default from scoring.yaml."""
+    rows = await session.execute(
+        select(AddressLabel.address, AddressLabel.label_type, AddressLabel.severity).where(
+            AddressLabel.severity.is_not(None)
+        )
+    )
+    return {(address, label_type): float(sev) for address, label_type, sev in rows.all()}

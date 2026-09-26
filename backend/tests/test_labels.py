@@ -15,6 +15,7 @@ from app.services.labels import (
     SyncCounts,
     count_labels,
     format_seed_csv,
+    load_severity_overrides,
     parse_sdn_xml,
     parse_seed_csv,
     sync_labels,
@@ -171,3 +172,13 @@ async def test_sync_rejects_duplicate_pairs(
     async with sessions() as session:
         with pytest.raises(LabelIngestError, match="Duplicate"):
             await sync_labels(session, [record, record])
+
+
+async def test_severity_overrides_load_only_rows_that_set_one(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    async with sessions() as session:
+        await sync_labels(session, parse_seed_csv(_seed()))
+        overrides = await load_severity_overrides(session)
+
+    assert overrides == {(MIXER, "mixer"): 0.9}
