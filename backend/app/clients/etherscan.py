@@ -31,6 +31,9 @@ _MAX_RECORD_WINDOW = 10_000
 # Max records per page on the free tier (Etherscan changelog, July 2026).
 TXLIST_PAGE_SIZE = 1_000
 _NO_TRANSACTIONS_MESSAGE = "No transactions found"
+# EIP-7702 delegation designator: 0xef0100 followed by the 20-byte delegate address.
+_EIP7702_PREFIX = "0xef0100"
+_EIP7702_LENGTH = len(_EIP7702_PREFIX) + 40
 
 
 class Endpoint(StrEnum):
@@ -200,6 +203,47 @@ class EtherscanClient:
                 window_start = last_block_in_window
 
         return FetchedTransfers(transfers, requests)
+
+    async def block_number(self) -> int:
+        """The latest block number (proxy eth_blockNumber)."""
+        return int(str(await self._proxy({"action": "eth_blockNumber"})), 16)
+
+    async def block_senders(self, block: int) -> tuple[int, list[str]]:
+        """(timestamp, sender of each transaction) for a block (proxy eth_getBlockByNumber)."""
+        result = await self._proxy(
+            {"action": "eth_getBlockByNumber", "tag": hex(block), "boolean": "true"}
+        )
+        if not isinstance(result, dict):
+            raise EtherscanError(f"Unexpected block payload for {block}: {result!r}")
+        transactions = result.get("transactions") or []
+        senders = [str(tx["from"]).lower() for tx in transactions if isinstance(tx, dict)]
+        return int(str(result["timestamp"]), 16), senders
+
+    async def is_contract(self, address: str) -> bool:
+        """True if `address` has contract code (proxy eth_getCode).
+
+        Since EIP-7702 (Pectra, 2025) an EOA can carry a delegation designator,
+        0xef0100 + a 20-byte address, as its code. That is still an externally owned
+        account, so it isn't counted as a contract.
+        """
+        code = str(
+            await self._proxy({"action": "eth_getCode", "address": address, "tag": "latest"})
+        )
+        if code in ("0x", ""):
+            return False
+        return not (code.startswith(_EIP7702_PREFIX) and len(code) == _EIP7702_LENGTH)
+
+    async def _proxy(self, params: dict[str, str | int]) -> object:
+        payload, _ = await self._request(
+            {"chainid": self._chain_id, "module": "proxy", "apikey": self._api_key, **params}
+        )
+        if "error" in payload:
+            raise EtherscanError(
+                f"Etherscan proxy error for {params['action']}: {payload['error']}"
+            )
+        if payload.get("status") == "0":
+            raise EtherscanError(f"Etherscan error for {params['action']}: {payload.get('result')}")
+        return payload.get("result")
 
     async def _fetch_page(
         self,

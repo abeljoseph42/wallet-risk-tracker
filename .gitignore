@@ -1,5 +1,9 @@
 .env
-data/
+# Raw data stays local; only versioned evaluation sets are committed.
+data/*
+!data/eval/
+data/eval/*
+!data/eval/eval_set_*.json
 __pycache__/
 node_modules/
 .venv/

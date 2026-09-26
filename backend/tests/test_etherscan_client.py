@@ -359,3 +359,48 @@ async def test_api_rejection_is_reported_as_api_error() -> None:
         await client.fetch_transfers(Endpoint.NORMAL, "0xabc")
 
     assert excinfo.value.kind == "api"
+
+
+def _rpc(result: object) -> dict[str, object]:
+    return {"jsonrpc": "2.0", "id": 1, "result": result}
+
+
+async def test_block_number_parses_hex() -> None:
+    handler = _Handler([_rpc("0x18db2ff")])
+    client = _client(handler)
+
+    assert await client.block_number() == 26_063_615
+    assert handler.requests[0].url.params["module"] == "proxy"
+
+
+async def test_block_senders_returns_timestamp_and_lowercase_senders() -> None:
+    block = {"timestamp": "0x10", "transactions": [{"from": "0xAbC"}, {"from": "0xdef"}]}
+    handler = _Handler([_rpc(block)])
+    client = _client(handler)
+
+    assert await client.block_senders(100) == (16, ["0xabc", "0xdef"])
+    assert handler.requests[0].url.params["tag"] == "0x64"
+    assert handler.requests[0].url.params["boolean"] == "true"
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("0x", False),
+        ("0xef0100" + "5a" * 20, False),  # EIP-7702 delegated EOA
+        ("0x6080604052", True),
+        ("0xef0100" + "5a" * 21, True),  # not a well-formed delegation designator
+    ],
+)
+async def test_is_contract_treats_7702_delegated_eoas_as_eoas(code: str, expected: bool) -> None:
+    client = _client(_Handler([_rpc(code)]))
+
+    assert await client.is_contract("0x" + "1" * 40) is expected
+
+
+async def test_proxy_json_rpc_error_raises() -> None:
+    error = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32602, "message": "invalid argument"}}
+    client = _client(_Handler([error]))
+
+    with pytest.raises(EtherscanError, match="invalid argument"):
+        await client.block_number()

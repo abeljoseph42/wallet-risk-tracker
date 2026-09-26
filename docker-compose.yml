@@ -27,6 +27,9 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      # Evaluation scripts read/write data/eval and write docs/EVALUATION.md.
+      - ./data:/data
+      - ./docs:/docs
     depends_on:
       db:
         condition: service_healthy

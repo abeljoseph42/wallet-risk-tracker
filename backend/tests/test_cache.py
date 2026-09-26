@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.clients.etherscan import Endpoint, FetchedTransfers, Transfer
 from app.core.addresses import InvalidAddressError, to_checksum_address
 from app.db.models import ApiMetric, FetchLog
-from app.services.cache import TransactionCache, summarize_metrics
+from app.services.cache import Snapshot, TransactionCache, summarize_metrics
 
 WALLET = "0x" + "a" * 40
 OTHER = "0x" + "b" * 40
@@ -308,3 +308,49 @@ async def test_lookup_all_keeps_endpoints_separate(
         normal_only = await summarize_metrics(session, TXLIST)
     assert metrics.lookups == 3
     assert normal_only.lookups == 1
+
+
+async def test_snapshot_lookup_ignores_ttl_once_history_covers_the_snapshot(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    source = FakeEtherscan([_tx(1, 101), _tx(2, 150)])
+    clock = FakeClock()
+    cache = _cache(sessions, source, clock)
+    snapshot = Snapshot(block=120, time=clock.now - datetime.timedelta(days=1))
+    await cache.lookup(WALLET, snapshot=snapshot)
+
+    clock.now += datetime.timedelta(days=30)  # far past the TTL
+    again = await cache.lookup(WALLET, snapshot=snapshot)
+
+    assert again.cache_hit
+    assert len(source.calls) == 1
+
+
+async def test_snapshot_after_the_last_fetch_forces_a_refresh(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    source = FakeEtherscan([_tx(1, 101)])
+    clock = FakeClock()
+    cache = _cache(sessions, source, clock)
+    await cache.lookup(WALLET)
+
+    later = Snapshot(block=500, time=clock.now + datetime.timedelta(hours=1))
+    result = await cache.lookup(WALLET, snapshot=later)
+
+    assert not result.cache_hit
+    assert len(source.calls) == 2
+
+
+async def test_capped_read_stopping_before_the_snapshot_covers_the_same_cap(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    source = FakeEtherscan([_tx(n, 100 + n) for n in range(1, 6)])
+    clock = FakeClock()
+    cache = _cache(sessions, source, clock)
+    snapshot = Snapshot(block=1000, time=clock.now + datetime.timedelta(hours=1))
+    await cache.lookup(WALLET, max_records=2, snapshot=snapshot)
+
+    again = await cache.lookup(WALLET, max_records=2, snapshot=snapshot)
+
+    assert again.cache_hit
+    assert again.truncated

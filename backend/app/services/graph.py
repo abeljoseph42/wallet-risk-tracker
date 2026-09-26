@@ -33,7 +33,7 @@ from app.clients.etherscan import Endpoint
 from app.config import GraphParams
 from app.core.addresses import normalize_address
 from app.db.models import Transaction
-from app.services.cache import CacheLookup
+from app.services.cache import CacheLookup, Snapshot
 from app.services.valuation import Valuer, eth_only
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,12 @@ LabelIndex = Mapping[str, frozenset[str]]
 
 class TransferLookup(Protocol):
     async def lookup(
-        self, address: str, endpoint: Endpoint = ..., *, max_records: int | None = ...
+        self,
+        address: str,
+        endpoint: Endpoint = ...,
+        *,
+        max_records: int | None = ...,
+        snapshot: Snapshot | None = ...,
     ) -> CacheLookup: ...
 
 
@@ -123,11 +128,13 @@ class GraphBuilder:
         labels: LabelIndex,
         params: GraphParams,
         valuer: Valuer = eth_only,
+        snapshot: Snapshot | None = None,
     ) -> None:
         self._lookup = lookup
         self._labels = labels
         self._params = params
         self._value = valuer
+        self._snapshot = snapshot
 
     async def build(self, root: str) -> TransactionGraph:
         root = normalize_address(root)
@@ -190,11 +197,19 @@ class GraphBuilder:
     async def _fetch(
         self, stats: GraphStats, address: str, endpoint: Endpoint, cap: int
     ) -> tuple[list[Transaction], bool]:
-        looked_up = await self._lookup.lookup(address, endpoint, max_records=cap)
+        looked_up = await self._lookup.lookup(
+            address, endpoint, max_records=cap, snapshot=self._snapshot
+        )
         stats.lookups += 1
         stats.cache_hits += looked_up.cache_hit
         stats.api_calls += looked_up.upstream_calls
-        return looked_up.transactions, looked_up.truncated
+        if self._snapshot is None:
+            return looked_up.transactions, looked_up.truncated
+        # Deterministic view as of the snapshot: only transfers up to its block, and the cap
+        # applied to the oldest ones, which never change however much is cached later.
+        rows = [r for r in looked_up.transactions if r.block_number <= self._snapshot.block]
+        truncated = len(rows) > cap or (looked_up.truncated and len(rows) >= cap)
+        return rows[:cap], truncated
 
     def _collect(self, run: _Run, address: str, rows: Iterable[Transaction]) -> _NodeTransfers:
         out = _NodeTransfers()
