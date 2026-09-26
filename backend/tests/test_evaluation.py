@@ -59,9 +59,12 @@ def test_eval_set_round_trips_through_json() -> None:
         seed=1,
         snapshot_block=100,
         snapshot_time="2026-09-26T00:00:00Z",
-        label_sources={"ofac_sdn": "09/23/2026"},
+        label_sources={"ofac_sdn": 2},
+        flagged_labels={_a(1): "sanctioned", _a(2): "mixer"},
         scoring_flagged=[_a(1)],
         heldout_flagged=[_a(2)],
+        exchange_labels=[_a(9)],
+        excluded_contaminated=1,
         examples=[Example(_a(3), 1, "pos_mixer", _a(2))],
     )
 

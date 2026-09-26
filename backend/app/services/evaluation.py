@@ -78,9 +78,16 @@ class EvalSet:
     seed: int
     snapshot_block: int
     snapshot_time: str
-    label_sources: dict[str, str]
+    # Every label the evaluation depends on, frozen here so a later label ingest (e.g. an
+    # OFAC delisting) can't change the results: flagged address -> label type, the split,
+    # and the exchange addresses.
+    label_sources: dict[str, int]
+    flagged_labels: dict[str, str]
     scoring_flagged: list[str]
     heldout_flagged: list[str]
+    exchange_labels: list[str]
+    # Randomly sampled negatives dropped for transacting directly with a held-out address.
+    excluded_contaminated: int = 0
     examples: list[Example] = field(default_factory=list)
 
     def to_json(self) -> str:
