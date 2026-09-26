@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.clients.etherscan import Endpoint, FetchedTransfers, Transfer
-from app.core.addresses import InvalidAddressError
+from app.core.addresses import InvalidAddressError, to_checksum_address
 from app.db.models import ApiMetric, FetchLog
 from app.services.cache import TransactionCache, summarize_metrics
 
@@ -158,7 +158,7 @@ async def test_mixed_case_address_is_normalized_to_one_cache_entry(
 ) -> None:
     source = FakeEtherscan([_tx(1, 100)])
     cache = _cache(sessions, source, FakeClock())
-    mixed = "0x" + "Aa" * 20
+    mixed = to_checksum_address("0x" + "aa" * 20)  # a valid EIP-55 mixed-case form
 
     await cache.lookup(mixed)
     second = await cache.lookup(mixed.lower())
