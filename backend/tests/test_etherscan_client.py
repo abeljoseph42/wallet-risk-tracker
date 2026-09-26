@@ -191,8 +191,9 @@ async def test_raises_after_exhausting_retries() -> None:
         sleep=fake_sleep,
     )
 
-    with pytest.raises(EtherscanError, match="after 3 attempts"):
+    with pytest.raises(EtherscanError, match="after 3 attempts") as excinfo:
         await client.fetch_transfers(Endpoint.NORMAL, "0xabc")
+    assert excinfo.value.kind == "unavailable"
 
     assert sleeps == [0.001, 0.002]
 
@@ -330,3 +331,31 @@ async def test_complete_history_under_the_cap_is_not_truncated() -> None:
     result = await client.fetch_transfers(Endpoint.NORMAL, "0xabc", max_records=3)
 
     assert not result.truncated
+
+
+async def test_persistent_rate_limiting_is_reported_as_rate_limited() -> None:
+    async def no_sleep(seconds: float) -> None:
+        return None
+
+    throttled: dict[str, object] = {
+        "status": "0",
+        "message": "NOTOK",
+        "result": "Max calls per sec rate limit reached (3/sec)",
+    }
+    handler = _Handler([throttled] * 3)
+    client = _client(handler, sleep=no_sleep, max_retries=3)
+
+    with pytest.raises(EtherscanError) as excinfo:
+        await client.fetch_transfers(Endpoint.NORMAL, "0xabc")
+
+    assert excinfo.value.kind == "rate_limited"
+
+
+async def test_api_rejection_is_reported_as_api_error() -> None:
+    handler = _Handler([{"status": "0", "message": "NOTOK", "result": "Invalid API Key"}])
+    client = _client(handler)
+
+    with pytest.raises(EtherscanError) as excinfo:
+        await client.fetch_transfers(Endpoint.NORMAL, "0xabc")
+
+    assert excinfo.value.kind == "api"

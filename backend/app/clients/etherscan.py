@@ -13,6 +13,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Literal
 
 import httpx
 from pydantic import BaseModel, Field
@@ -38,8 +39,20 @@ class Endpoint(StrEnum):
     TOKEN = "tokentx"
 
 
+EtherscanErrorKind = Literal["api", "rate_limited", "unavailable", "config"]
+
+
 class EtherscanError(Exception):
-    """Raised for non-retryable Etherscan API errors (bad key, bad address, etc.)."""
+    """An Etherscan call that failed for good.
+
+    `kind`: "api" (Etherscan rejected the request, e.g. a bad key), "rate_limited" (still
+    throttled after every retry), "unavailable" (transport errors or 5xx after every
+    retry), or "config" (no API key configured).
+    """
+
+    def __init__(self, message: str, kind: EtherscanErrorKind = "api") -> None:
+        super().__init__(message)
+        self.kind: EtherscanErrorKind = kind
 
 
 class _RawTransfer(BaseModel):
@@ -259,7 +272,8 @@ class EtherscanClient:
             await self._sleep(delay)
 
         raise EtherscanError(
-            f"Etherscan request failed after {self._max_retries} attempts: {last_error}"
+            f"Etherscan request failed after {self._max_retries} attempts: {last_error}",
+            kind="rate_limited" if last_error.startswith("rate limited") else "unavailable",
         )
 
 
@@ -274,7 +288,7 @@ def _is_rate_limited(payload: dict[str, object]) -> bool:
 
 def client_from_settings(settings: Settings, http: httpx.AsyncClient) -> EtherscanClient:
     if not settings.etherscan_api_key:
-        raise EtherscanError("ETHERSCAN_API_KEY is not set")
+        raise EtherscanError("ETHERSCAN_API_KEY is not set", kind="config")
     rate = settings.etherscan_rate_limit_per_sec * settings.etherscan_rate_headroom
     return EtherscanClient(
         settings.etherscan_api_key,
