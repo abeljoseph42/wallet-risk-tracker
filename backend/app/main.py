@@ -57,6 +57,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(score_jobs: ScoreJobs | None = None) -> FastAPI:
     settings = get_settings()
     logging.basicConfig(level=settings.log_level)
+    # httpx logs every request URL at INFO, and Etherscan and Alchemy take the API key in
+    # the URL, so INFO request logs would leak keys into container and cloud logs.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     app = FastAPI(
         title="Wallet Risk Tracker",
