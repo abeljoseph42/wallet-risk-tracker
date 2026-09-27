@@ -5,8 +5,9 @@ wallet's graph (built once, from cache). Selection rule, fixed before looking at
 maximize F1 subject to flagging at most MAX_FPR of negatives; ties go to the more
 conservative setting (higher threshold, larger saturation, stronger hop decay).
 
-Only the dev set is used here. Final numbers come from a fresh test set scored once
-with the chosen parameters (scripts/run_eval.py), so they aren't tuned on.
+Numbers produced on the set that was tuned on are optimistic; run_eval.py labels them
+with --tuned-on-this-set. An untouched test set (build_eval_set.py --exclude) would give
+held-out numbers.
 
 Usage: docker compose run --rm backend python scripts/tune.py [--version v1]
 """

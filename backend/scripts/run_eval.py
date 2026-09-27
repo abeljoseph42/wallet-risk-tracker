@@ -7,8 +7,11 @@ third set of graphs is built that traverses through exchanges and hubs and is sc
 every discount off: the naive baseline for the false-positive comparison. Every number
 in the report is computed here.
 
+--tuned-on-this-set marks the report as scoring the same set the parameters were tuned
+on (scripts/tune.py), so its numbers are labeled optimistic rather than held-out.
+
 Usage: docker compose run --rm backend python scripts/run_eval.py \\
-           [--version v2] [--report docs/EVALUATION.md] [--naive]
+           [--version v1] [--report docs/EVALUATION.md] [--naive] [--tuned-on-this-set]
 """
 
 import argparse
@@ -130,6 +133,7 @@ def render(
     api_calls: int,
     *,
     report_name: str,
+    tuned_on_this_set: bool = False,
 ) -> str:
     threshold = params.flag_threshold
     holdout = results["holdout"]
@@ -161,7 +165,8 @@ def render(
         "```bash",
         "docker compose run --rm backend python scripts/run_eval.py "
         f"--version {eval_set.version} --report {report_name}"
-        + (" --naive" if NAIVE in variants else ""),
+        + (" --naive" if NAIVE in variants else "")
+        + (" --tuned-on-this-set" if tuned_on_this_set else ""),
         "```",
         "",
         "## Headline (hold-out labels, full model)",
@@ -179,6 +184,19 @@ def render(
         f"(`{baseline}`: {_ci(fp(baseline, 'neg_exchange'), n_ex)}).",
         f"- Signal coverage (score > 0): positives {signal(positives, 'full')}, "
         f"negatives {signal(negatives, 'full')}.",
+        *(
+            [
+                "",
+                f"> **Tuned on this set.** The scoring parameters were chosen by "
+                f"`scripts/tune.py` on these same {len(holdout)} wallets "
+                f"(`docs/evaluation/tuning_{eval_set.version}.md`), so these numbers are "
+                "optimistic. The run with parameters fixed in advance, before tuning, is "
+                f"`docs/evaluation/{eval_set.version}_dev.md`. No untouched test set was "
+                "scored.",
+            ]
+            if tuned_on_this_set
+            else []
+        ),
         "",
         "## Setup",
         "",
@@ -268,8 +286,14 @@ def render(
         "the two is the leakage the hold-out design removes.",
         "- **Random negatives are unlabeled, not verified clean.** Some may be genuinely "
         "risky, which would make measured precision a lower bound.",
-        f"- The threshold ({threshold:g}) was fixed before this set was scored; the PR curve "
-        "shows every other operating point.",
+        (
+            f"- The threshold ({threshold:g}) and other parameters were tuned on this set, so "
+            "precision and recall here are upper estimates for unseen wallets; the PR curve "
+            "shows every other operating point."
+            if tuned_on_this_set
+            else f"- The threshold ({threshold:g}) was fixed before this set was scored; the "
+            "PR curve shows every other operating point."
+        ),
         "",
     ]
     return "\n".join(lines)
@@ -288,22 +312,35 @@ def write_csv(path: Path, results: dict[str, list[Scored]]) -> None:
                 )
 
 
-async def main(version: str, report: str, include_naive: bool) -> None:
+async def main(version: str, report: str, include_naive: bool, tuned_here: bool) -> None:
     eval_set = EvalSet.from_json((EVAL_DIR / f"eval_set_{version}.json").read_text())
     params = load_scoring_params()
     print(f"Evaluating {len(eval_set.examples)} wallets at block {eval_set.snapshot_block}")
     results, failed, api_calls = await score_all(eval_set, params, include_naive)
     write_csv(EVAL_DIR / f"results_{version}.csv", results)
     (REPO / report).write_text(
-        render(eval_set, params, results, failed, api_calls, report_name=report)
+        render(
+            eval_set,
+            params,
+            results,
+            failed,
+            api_calls,
+            report_name=report,
+            tuned_on_this_set=tuned_here,
+        )
     )
     print(f"Wrote {report} and data/eval/results_{version}.csv")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default="v2")
+    parser.add_argument("--version", default="v1")
     parser.add_argument("--report", default="docs/EVALUATION.md")
     parser.add_argument("--naive", action="store_true", help="also build naive-traversal graphs")
+    parser.add_argument(
+        "--tuned-on-this-set",
+        action="store_true",
+        help="label the numbers as tuned on this eval set (not held-out)",
+    )
     args = parser.parse_args()
-    asyncio.run(main(args.version, args.report, args.naive))
+    asyncio.run(main(args.version, args.report, args.naive, args.tuned_on_this_set))

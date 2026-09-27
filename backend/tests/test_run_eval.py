@@ -85,7 +85,7 @@ def _scored(address: int, label: int, group: Group, full: float, naive: float) -
     return run_eval.Scored(Example(_a(address), label, group, "test"), scores)
 
 
-def _render(rows: list[Any]) -> str:
+def _render(rows: list[Any], *, tuned: bool = False) -> str:
     params = load_scoring_params().model_copy(update={"flag_threshold": 50})
     eval_set = _eval_set([r.example for r in rows])
     report: str = run_eval.render(
@@ -95,6 +95,7 @@ def _render(rows: list[Any]) -> str:
         set(),
         7,
         report_name="docs/EVALUATION.md",
+        tuned_on_this_set=tuned,
     )
     return report
 
@@ -131,3 +132,18 @@ def test_render_has_a_results_table_per_mode() -> None:
     assert "Hold-out labels (the setting to quote)" in report
     assert "In-sample labels" in report
     assert report.count("| Variant | Precision | Recall | F1 | AP | TP | FP | FN |") == 2
+
+
+def test_tuned_on_this_set_labels_the_numbers_as_optimistic() -> None:
+    rows = [_scored(10, 1, "pos_mixer", 80, 80), _scored(20, 0, "neg_random", 0, 0)]
+
+    tuned = _render(rows, tuned=True)
+    untuned = _render(rows)
+
+    assert "**Tuned on this set.**" in tuned
+    assert "docs/evaluation/tuning_test.md" in tuned
+    assert "docs/evaluation/test_dev.md" in tuned
+    assert "--tuned-on-this-set" in tuned
+    assert "was fixed before this set was scored" not in tuned
+    assert "Tuned on this set" not in untuned
+    assert "was fixed before this set was scored" in untuned

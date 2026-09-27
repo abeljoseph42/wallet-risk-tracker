@@ -9,7 +9,7 @@
 - Leakage rule: no labeled address is ever a positive or a random negative.
 
 Usage: docker compose run --rm backend python scripts/build_eval_set.py \
-           [--version v2 --seed 20260927 --exclude v1]
+           [--version NAME --seed N --exclude OTHER_VERSION ...]
 Writes data/eval/eval_set_<version>.json. --exclude keeps a test set disjoint from the
 wallets of earlier (e.g. tuning) sets. Rerunning with the same labels and seed
 reproduces the same set, served mostly from cache.
