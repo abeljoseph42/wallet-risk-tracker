@@ -13,6 +13,9 @@ exchange_handling:
   enabled: true
   mode: discount        # "discount" or "cut"
   exchange_discount: 0.2
+# A wallet counts as flagged at this score or above (tuned on the dev eval set).
+flag_threshold: 50
+
 buckets:                # lower bounds, inclusive
   low: 0
   medium: 25
@@ -22,6 +25,7 @@ buckets:                # lower bounds, inclusive
 # flow_factor = min(1, share / share_saturation), where share = the path's bottleneck
 # value / the target's total in+out volume. 10% of volume through a path = full weight.
 flow:
+  enabled: true
   share_saturation: 0.10
 
 # Values are compared in ETH-equivalent wei. ETH counts at face value; the stablecoins
@@ -45,3 +49,5 @@ graph:
   degree_threshold: 500        # distinct counterparties above which a node is not expanded
   skip_failed: true
   skip_zero_value: true        # also removes zero-value "address poisoning" transfers
+  expand_exchanges: false      # true only for the evaluation's naive-traversal baseline
+  expand_hubs: false

@@ -36,6 +36,7 @@ def make_graph(
                     node,
                     labels=LABELS.get(node, []),
                     stop_reason="high_degree" if node in hubs else None,
+                    hub=node in hubs,
                 )
         g.add_edge(src, dst, value_eq_wei=value)
     if root_volume is None:
@@ -275,3 +276,11 @@ def test_breakdown_json_stringifies_wei(params: ScoringParams) -> None:
 
     assert item["bottleneck_eq_wei"] == str(10**24)
     assert item["address"] == SANCTIONED
+
+
+def test_flow_factor_can_be_switched_off(params: ScoringParams) -> None:
+    graph = make_graph([(SANCTIONED, ROOT, ETH // 1000), (ROOT, A, 100 * ETH)])
+    no_flow = params.model_copy(update={"flow": params.flow.model_copy(update={"enabled": False})})
+
+    assert score_graph(graph, params).score < 1
+    assert score_graph(graph, no_flow).score == 100
