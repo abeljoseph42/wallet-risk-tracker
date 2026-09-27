@@ -404,3 +404,19 @@ async def test_proxy_json_rpc_error_raises() -> None:
 
     with pytest.raises(EtherscanError, match="invalid argument"):
         await client.block_number()
+
+
+async def test_eth_balance_returns_wei() -> None:
+    handler = _Handler([{"status": "1", "message": "OK", "result": "5721681785331996621"}])
+    client = _client(handler)
+
+    assert await client.eth_balance("0xabc") == 5_721_681_785_331_996_621
+    assert handler.requests[0].url.params["action"] == "balance"
+
+
+async def test_eth_balance_error_raises() -> None:
+    handler = _Handler([{"status": "0", "message": "NOTOK", "result": "Invalid address format"}])
+    client = _client(handler)
+
+    with pytest.raises(EtherscanError, match="Invalid address"):
+        await client.eth_balance("0xabc")
