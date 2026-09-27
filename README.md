@@ -3,7 +3,7 @@
 Paste an Ethereum address, get a 0-100 risk score based on transaction-graph proximity to
 sanctioned and known-malicious addresses, plus a portfolio view and a graph of flagged paths.
 
-> Status: Phase 5 (API). See `CLAUDE.md` for the full build plan.
+> Status: Phase 7 (portfolio holdings). See `CLAUDE.md` for the full build plan.
 
 ## Run locally
 
@@ -22,6 +22,15 @@ curl -s -X POST localhost:8000/api/v1/scores -H 'content-type: application/json'
   -d '{"address": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"}'
 curl -s localhost:8000/api/v1/scores/<id>
 ```
+
+Holdings (ETH + priced tokens, USD values):
+
+```bash
+curl -s localhost:8000/api/v1/wallets/0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045/portfolio
+```
+
+Token balances need a free Alchemy key in `.env` as `BALANCES_API_KEY`; without it the
+portfolio still returns ETH with a warning.
 
 Labels must be loaded once first (see Scripts: `ingest_ofac.py`, `ingest_labels.py`).
 

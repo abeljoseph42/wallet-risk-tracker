@@ -204,6 +204,23 @@ class EtherscanClient:
 
         return FetchedTransfers(transfers, requests)
 
+    async def eth_balance(self, address: str) -> int:
+        """Current ETH balance in wei (account `balance`, free tier)."""
+        payload, _ = await self._request(
+            {
+                "chainid": self._chain_id,
+                "module": "account",
+                "action": "balance",
+                "address": address,
+                "tag": "latest",
+                "apikey": self._api_key,
+            }
+        )
+        result = payload.get("result")
+        if payload.get("status") != "1" or not isinstance(result, str) or not result.isdigit():
+            raise EtherscanError(f"Etherscan balance error for {address}: {result}")
+        return int(result)
+
     async def block_number(self) -> int:
         """The latest block number (proxy eth_blockNumber)."""
         return int(str(await self._proxy({"action": "eth_blockNumber"})), 16)
