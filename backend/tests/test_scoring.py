@@ -47,7 +47,11 @@ def make_graph(
 
 @pytest.fixture
 def params() -> ScoringParams:
-    return load_scoring_params()
+    """Fixed formula parameters (CLAUDE.md section 7 defaults), independent of tuning, so
+    these tests check the formula rather than whatever scoring.yaml currently holds."""
+    loaded = load_scoring_params()
+    flow = loaded.flow.model_copy(update={"enabled": True, "share_saturation": 0.10})
+    return loaded.model_copy(update={"hop_decay": 0.5, "flow": flow, "flag_threshold": 50})
 
 
 def with_handling(params: ScoringParams, **changes: object) -> ScoringParams:
