@@ -8,8 +8,10 @@
   any that touched a held-out address; plus labeled exchange wallets.
 - Leakage rule: no labeled address is ever a positive or a random negative.
 
-Usage: docker compose run --rm backend python scripts/build_eval_set.py
-Writes data/eval/eval_set_<version>.json. Rerunning with the same labels and seed
+Usage: docker compose run --rm backend python scripts/build_eval_set.py \
+           [--version NAME --seed N --exclude OTHER_VERSION ...]
+Writes data/eval/eval_set_<version>.json. --exclude keeps a test set disjoint from the
+wallets of earlier (e.g. tuning) sets. Rerunning with the same labels and seed
 reproduces the same set, served mostly from cache.
 """
 
@@ -31,7 +33,7 @@ from app.services.cache import Snapshot, TransactionCache
 from app.services.evaluation import EvalSet, Example, FlaggedLabel, Group, split_labels
 
 EVAL_DIR = Path(__file__).resolve().parents[2] / "data" / "eval"
-SEED = 20260926
+DEFAULT_SEED = 20260926
 TARGETS: dict[Group, int] = {
     "pos_sanctioned": 75,
     "pos_mixer": 75,
@@ -104,7 +106,7 @@ async def _pick_positives(
     return picked
 
 
-async def main(version: str) -> None:
+async def main(version: str, seed: int, exclude: list[str]) -> None:
     settings = get_settings()
     params = load_scoring_params()
     sessions = get_sessionmaker()
@@ -117,7 +119,14 @@ async def main(version: str) -> None:
     ]
     exchanges = sorted({r.address for r in rows if r.label_type == "exchange"})
     labeled = {r.address for r in rows}
-    rng = random.Random(SEED)
+    rng = random.Random(seed)
+    excluded = {
+        e.address
+        for other in exclude
+        for e in EvalSet.from_json((EVAL_DIR / f"eval_set_{other}.json").read_text()).examples
+    }
+    if excluded:
+        print(f"Excluding {len(excluded)} wallets from {', '.join(exclude)}")
 
     async with httpx.AsyncClient(timeout=30) as http:
         client = client_from_settings(settings, http)
@@ -129,11 +138,11 @@ async def main(version: str) -> None:
         snapshot = Snapshot(block, datetime.datetime.fromtimestamp(ts, datetime.UTC))
         print(f"Snapshot: block {block} ({snapshot.time.isoformat()})")
 
-        scoring, heldout = split_labels(flagged, SEED)
+        scoring, heldout = split_labels(flagged, seed)
         type_of = {label.address: label.label_type for label in flagged}
         print(f"Split: {len(scoring)} scoring / {len(heldout)} held-out flagged addresses")
 
-        used = set(labeled)
+        used = set(labeled) | excluded
         examples: list[Example] = []
         positive_groups: tuple[tuple[str, Group], ...] = (
             ("sanctioned", "pos_sanctioned"),
@@ -177,7 +186,7 @@ async def main(version: str) -> None:
             random_negatives.append(Example(sender, 0, "neg_random", f"block {sampled}"))
         examples += random_negatives
 
-        exchange_pool = list(exchanges)
+        exchange_pool = [a for a in exchanges if a not in excluded]
         rng.shuffle(exchange_pool)
         examples += [
             Example(address, 0, "neg_exchange", "etherscan-labels exchange")
@@ -188,7 +197,7 @@ async def main(version: str) -> None:
     eval_set = EvalSet(
         version=version,
         created_at=datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
-        seed=SEED,
+        seed=seed,
         snapshot_block=snapshot.block,
         snapshot_time=snapshot.time.isoformat(),
         label_sources=dict(sorted(Counter(r.source for r in rows).items())),
@@ -210,4 +219,7 @@ async def main(version: str) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", default="v1")
-    asyncio.run(main(parser.parse_args().version))
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--exclude", nargs="*", default=[], help="eval set versions to avoid")
+    args = parser.parse_args()
+    asyncio.run(main(args.version, args.seed, args.exclude))

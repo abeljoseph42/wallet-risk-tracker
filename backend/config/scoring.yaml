@@ -1,7 +1,7 @@
 # Scoring parameters (CLAUDE.md section 7). Starting defaults, to be tuned with the
 # Phase 6 evaluation harness. Every key here is part of the params hash in score output.
 max_hops: 3
-hop_decay: 0.5
+hop_decay: 0.75             # tuned on dev set v1 (docs/evaluation/tuning_v1.md)
 severity:
   sanctioned: 1.0
   malicious: 0.8
@@ -13,6 +13,10 @@ exchange_handling:
   enabled: true
   mode: discount        # "discount" or "cut"
   exchange_discount: 0.2
+# A wallet counts as flagged at this score or above. Tuned on dev set v1: any meaningful
+# exposure counts, since clean wallets almost never show any signal.
+flag_threshold: 1
+
 buckets:                # lower bounds, inclusive
   low: 0
   medium: 25
@@ -22,7 +26,8 @@ buckets:                # lower bounds, inclusive
 # flow_factor = min(1, share / share_saturation), where share = the path's bottleneck
 # value / the target's total in+out volume. 10% of volume through a path = full weight.
 flow:
-  share_saturation: 0.10
+  enabled: true
+  share_saturation: 0.01     # tuned on dev set v1 (lowest value in the grid)
 
 # Values are compared in ETH-equivalent wei. ETH counts at face value; the stablecoins
 # below count at $1 and convert at a fixed usd_per_eth so results are reproducible.
@@ -45,3 +50,5 @@ graph:
   degree_threshold: 500        # distinct counterparties above which a node is not expanded
   skip_failed: true
   skip_zero_value: true        # also removes zero-value "address poisoning" transfers
+  expand_exchanges: false      # true only for the evaluation's naive-traversal baseline
+  expand_hubs: false
