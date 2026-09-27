@@ -1,5 +1,6 @@
 """Tests for the retry helper and the DefiLlama and Alchemy clients (mocked transports)."""
 
+import asyncio
 import json
 
 import httpx
@@ -187,3 +188,22 @@ async def test_api_key_goes_in_the_url_path_only() -> None:
     await client.token_balances("0x" + "1" * 40)
 
     assert urls == ["https://eth-mainnet.g.alchemy.com/v2/SECRET"]
+
+
+async def test_price_batches_run_concurrently_but_bounded() -> None:
+    active = 0
+    peak = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return _llama({})
+
+    client = PriceClient(_client(httpx.MockTransport(handler)), retry=FAST)
+
+    await client.get_prices([token_price_id(f"0x{i:040x}") for i in range(500)])
+
+    assert peak == 4
