@@ -354,3 +354,37 @@ async def test_snapshot_caps_the_oldest_transfers_deterministically() -> None:
     assert node["stop_reason"] == "high_degree"
     # Degree is measured on the capped (oldest two) transfers only.
     assert node["degree"] == 2
+
+
+async def test_expand_exchanges_traverses_through_them() -> None:
+    lookup = FakeLookup([tx(ROOT, EXCHANGE), tx(EXCHANGE, a(5)), tx(a(5), SANCTIONED)])
+    default = await GraphBuilder(lookup, LABELS, params()).build(ROOT)
+    naive = await GraphBuilder(lookup, LABELS, params(expand_exchanges=True)).build(ROOT)
+
+    assert SANCTIONED not in default.graph
+    assert naive.graph.nodes[SANCTIONED]["hop"] == 3
+    assert naive.graph.nodes[EXCHANGE]["expanded"]
+    # Risk labels stay endpoints even in naive mode.
+    assert naive.graph.nodes[SANCTIONED]["stop_reason"] == "labeled"
+
+
+async def test_expand_hubs_traverses_through_them_but_still_marks_them() -> None:
+    hub = a(50)
+    fan_out = [tx(hub, a(1000 + i)) for i in range(5)]
+    lookup = FakeLookup([tx(ROOT, hub), *fan_out, tx(hub, SANCTIONED)])
+    naive = await GraphBuilder(lookup, LABELS, params(degree_threshold=4, expand_hubs=True)).build(
+        ROOT
+    )
+
+    assert naive.graph.nodes[hub]["hub"]
+    assert naive.graph.nodes[hub]["stop_reason"] is None
+    assert SANCTIONED in naive.graph
+
+
+async def test_default_build_marks_hubs() -> None:
+    hub = a(50)
+    lookup = FakeLookup([tx(ROOT, hub), *(tx(hub, a(1000 + i)) for i in range(5))])
+    result = await GraphBuilder(lookup, LABELS, params(degree_threshold=4)).build(ROOT)
+
+    assert result.graph.nodes[hub]["hub"]
+    assert result.graph.nodes[hub]["stop_reason"] == "high_degree"

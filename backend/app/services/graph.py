@@ -158,7 +158,7 @@ class GraphBuilder:
         node = graph.nodes[address]
         is_root = address == result.root
 
-        if node["labels"] and not is_root:
+        if not is_root and self._is_endpoint(address):
             node["stop_reason"] = "labeled"
             return []
         if stats.expanded >= params.max_expanded_nodes:
@@ -169,8 +169,9 @@ class GraphBuilder:
         cap = params.max_records_target if is_root else params.max_records_per_node
         rows, truncated = await self._fetch(stats, address, Endpoint.NORMAL, cap)
         transfers = self._collect(run, address, rows)
-        if is_root or not self._is_hub(truncated, transfers):
-            # Only fetch internal and token transfers once normal ones show it isn't a hub.
+        if is_root or params.expand_hubs or not self._is_hub(truncated, transfers):
+            # Only fetch internal and token transfers once normal ones show it isn't a hub
+            # (or when hubs are expanded anyway, for the naive-traversal ablation).
             for endpoint in (Endpoint.INTERNAL, Endpoint.TOKEN):
                 more, more_truncated = await self._fetch(stats, address, endpoint, cap)
                 truncated = truncated or more_truncated
@@ -185,14 +186,23 @@ class GraphBuilder:
         )
         if not is_root and self._is_hub(truncated, transfers):
             stats.hubs += 1
-            node["stop_reason"] = "high_degree"
-            self._add_edges(run, transfers.new_edges, hop + 1, keep=frozenset())
-            return []
+            node["hub"] = True
+            if not params.expand_hubs:
+                node["stop_reason"] = "high_degree"
+                self._add_edges(run, transfers.new_edges, hop + 1, keep=frozenset())
+                return []
 
         return self._add_and_queue(run, address, transfers, hop + 1)
 
     def _is_hub(self, truncated: bool, transfers: _NodeTransfers) -> bool:
         return truncated or len(transfers.activity) > self._params.degree_threshold
+
+    def _is_endpoint(self, address: str) -> bool:
+        """Labeled addresses aren't expanded, except exchanges when `expand_exchanges` is on."""
+        labels = self._labels.get(address, frozenset())
+        if not labels:
+            return False
+        return not (self._params.expand_exchanges and labels == frozenset({"exchange"}))
 
     async def _fetch(
         self, stats: GraphStats, address: str, endpoint: Endpoint, cap: int
@@ -260,6 +270,7 @@ class GraphBuilder:
             truncated=False,
             volume_eq_wei=None,
             stop_reason=None,
+            hub=False,
             queued=False,
             skipped_neighbors=0,
         )
@@ -303,7 +314,7 @@ class GraphBuilder:
         candidates = [
             n
             for n in activity
-            if n not in labeled
+            if not self._is_endpoint(n)
             and (n not in graph or (nodes[n]["hop"] == new_hop and not nodes[n]["queued"]))
         ]
         candidates.sort(key=lambda n: (activity[n], n), reverse=True)
@@ -315,7 +326,7 @@ class GraphBuilder:
         for n in queued:
             nodes[n].update(queued=True, stop_reason=None)
         for n in labeled:
-            if n in graph and nodes[n]["stop_reason"] is None:
+            if n in graph and nodes[n]["stop_reason"] is None and self._is_endpoint(n):
                 nodes[n]["stop_reason"] = "labeled"
         nodes[address]["skipped_neighbors"] = len(candidates) - len(queued)
         return queued

@@ -133,8 +133,7 @@ def _best_path(
     via_nodes = {
         n
         for n, data in undirected.nodes(data=True)
-        if n not in (root, target)
-        and ("exchange" in data["labels"] or data.get("stop_reason") == "high_degree")
+        if n not in (root, target) and ("exchange" in data["labels"] or data.get("hub", False))
     }
     clean_view = nx.subgraph_view(undirected, filter_node=lambda n: n not in via_nodes)
     handling = params.exchange_handling
@@ -152,7 +151,7 @@ def _best_path(
             discount = 1.0
         bottleneck = _bottleneck(g, path)
         share = bottleneck / root_volume if root_volume > 0 else 0.0
-        flow_factor = min(1.0, share / params.flow.share_saturation)
+        flow_factor = min(1.0, share / params.flow.share_saturation) if params.flow.enabled else 1.0
         hop_weight = params.hop_decay ** (len(path) - 2)
         value = hop_weight * flow_factor * discount
         if value > best_value:
@@ -252,7 +251,7 @@ def flagged_subgraph(graph: TransactionGraph, result: ScoreResult) -> Subgraph:
                 "role": role,
                 "labels": list(data["labels"]),
                 "hop": data.get("hop"),
-                "is_hub": data.get("stop_reason") == "high_degree",
+                "is_hub": bool(data.get("hub", False)),
             }
         )
     edges: list[SubgraphEdge] = []

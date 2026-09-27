@@ -64,6 +64,9 @@ class GraphParams(BaseModel):
     degree_threshold: int = Field(ge=1)
     skip_failed: bool = True
     skip_zero_value: bool = True
+    # Ablation switches for the evaluation's naive baseline; production keeps both off.
+    expand_exchanges: bool = False
+    expand_hubs: bool = False
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -108,6 +111,7 @@ class Buckets(_Strict):
 
 
 class Flow(_Strict):
+    enabled: bool = True
     share_saturation: float = Field(gt=0, le=1)
 
 
@@ -132,6 +136,9 @@ class ScoringParams(_Strict):
     severity: Severity
     exchange_handling: ExchangeHandling
     buckets: Buckets
+    # Score at or above which a wallet counts as flagged (the classifier's operating point,
+    # tuned on the dev eval set). Separate from the display buckets.
+    flag_threshold: float = Field(ge=0, le=100)
     flow: Flow
     valuation: Valuation
     graph: GraphParams
