@@ -60,6 +60,8 @@ class ScoreResult:
     bucket: str
     params_hash: str
     breakdown: list[FlaggedContribution]
+    # score >= flag_threshold: the classifier's decision, as evaluated in docs/EVALUATION.md.
+    flagged: bool
 
 
 def score_graph(
@@ -113,6 +115,7 @@ def score_graph(
         bucket=_bucket(score, params),
         params_hash=params.params_hash,
         breakdown=breakdown,
+        flagged=score >= params.flag_threshold,
     )
 
 
