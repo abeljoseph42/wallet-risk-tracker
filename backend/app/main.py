@@ -9,11 +9,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
+from app.api.portfolio import router as portfolio_router
 from app.api.scores import router as scores_router
+from app.clients.balances import BalanceClient
 from app.clients.etherscan import client_from_settings
+from app.clients.prices import PriceClient
 from app.config import get_settings, load_scoring_params
 from app.db.session import get_sessionmaker
 from app.services.cache import TransactionCache
+from app.services.portfolio import PortfolioService
 from app.services.score_jobs import ScoreJobs
 
 logger = logging.getLogger(__name__)
@@ -21,7 +25,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    if getattr(app.state, "score_jobs", None) is not None:
+    provided_jobs = app.state.score_jobs is not None
+    if provided_jobs and app.state.portfolio is not None:
         # Provided by the caller (tests); nothing to build or tear down.
         yield
         return
@@ -30,12 +35,28 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     sessions = get_sessionmaker()
     async with httpx.AsyncClient(timeout=30) as http:
         cache = None
-        if settings.etherscan_api_key:
-            # One client per process: every job shares its rate limiter.
-            client = client_from_settings(settings, http)
-            cache = TransactionCache(sessions, client, ttl_seconds=settings.cache_ttl_seconds)
+        # One Etherscan client per process: scoring jobs and portfolio lookups share its
+        # rate limiter.
+        etherscan = client_from_settings(settings, http) if settings.etherscan_api_key else None
+        if etherscan is not None:
+            cache = TransactionCache(sessions, etherscan, ttl_seconds=settings.cache_ttl_seconds)
         else:
             logger.warning("ETHERSCAN_API_KEY is not set; scoring endpoints will return 503")
+        if not settings.balances_api_key:
+            logger.warning("BALANCES_API_KEY is not set; portfolios will omit token balances")
+        if app.state.portfolio is None:
+            app.state.portfolio = PortfolioService(
+                etherscan,
+                BalanceClient(settings.balances_api_key, http)
+                if settings.balances_api_key
+                else None,
+                PriceClient(http),
+                cache_seconds=settings.portfolio_cache_seconds,
+                top_n=settings.portfolio_top_n,
+            )
+        if provided_jobs:
+            yield
+            return
         jobs = ScoreJobs(
             sessions,
             cache,
@@ -54,7 +75,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             await jobs.shutdown()
 
 
-def create_app(score_jobs: ScoreJobs | None = None) -> FastAPI:
+def create_app(
+    score_jobs: ScoreJobs | None = None, portfolio: PortfolioService | None = None
+) -> FastAPI:
     settings = get_settings()
     logging.basicConfig(level=settings.log_level)
     # httpx logs every request URL at INFO, and Etherscan and Alchemy take the API key in
@@ -72,6 +95,7 @@ def create_app(score_jobs: ScoreJobs | None = None) -> FastAPI:
         lifespan=_lifespan,
     )
     app.state.score_jobs = score_jobs
+    app.state.portfolio = portfolio
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -82,6 +106,7 @@ def create_app(score_jobs: ScoreJobs | None = None) -> FastAPI:
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(health_router, include_in_schema=False)
     app.include_router(scores_router)
+    app.include_router(portfolio_router)
     return app
 
 

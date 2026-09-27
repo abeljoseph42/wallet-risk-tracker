@@ -158,3 +158,38 @@ class ScoreRunOut(BaseModel):
 
 class ErrorDetail(BaseModel):
     detail: str
+
+
+PortfolioWarning = Literal[
+    "eth_balance_unavailable",
+    "eth_balance_not_configured",
+    "token_balances_unavailable",
+    "token_balances_not_configured",
+    "prices_unavailable",
+]
+
+
+class HoldingOut(BaseModel):
+    token_address: str | None = Field(description="Token contract; null for ETH.")
+    symbol: str
+    decimals: int
+    balance: str = Field(description="Balance in whole units, as a decimal string.")
+    balance_raw: str = Field(description="Balance in base units (e.g. wei), decimal string.")
+    price_usd: float | None
+    value_usd: float | None
+    price_confidence: float | None = Field(description="DefiLlama's 0-1 price confidence.")
+
+
+class PortfolioOut(BaseModel):
+    address: str
+    eth: HoldingOut | None = Field(description="Null if the ETH balance is unavailable.")
+    tokens: list[HoldingOut] = Field(description="Priced tokens, largest USD value first.")
+    priced_token_count: int = Field(description="All priced tokens (the list may be capped).")
+    unpriced_token_count: int = Field(
+        description="Tokens with no reliable price, mostly airdropped spam; not listed."
+    )
+    total_usd: float | None = Field(description="ETH plus all priced tokens; null w/o prices.")
+    warnings: list[PortfolioWarning] = Field(
+        description="Data sources that were unavailable; the rest of the response is valid."
+    )
+    as_of: datetime.datetime

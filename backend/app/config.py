@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     score_max_concurrent_jobs: int = Field(default=2, ge=1)
     # A finished score for the same address and params is returned instead of recomputed.
     score_reuse_seconds: int = Field(default=3600, ge=0)
+    # Portfolio (Phase 7): balances and prices are cached this long, in memory.
+    portfolio_cache_seconds: int = Field(default=300, ge=0)
+    portfolio_top_n: int = Field(default=20, ge=1, le=100)
     log_level: str = "INFO"
     # Comma-separated list, e.g. "http://localhost:5173,https://example.com".
     cors_origins: str = "http://localhost:5173"
