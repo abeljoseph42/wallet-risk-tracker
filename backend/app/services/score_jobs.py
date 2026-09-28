@@ -22,7 +22,7 @@ from app.config import ScoringParams
 from app.core.addresses import normalize_address
 from app.db.models import ScoreRun
 from app.services.graph import GraphBuilder, TransferLookup
-from app.services.labels import load_label_index, load_severity_overrides
+from app.services.labels import load_label_index, load_label_names, load_severity_overrides
 from app.services.scoring import breakdown_json, flagged_subgraph, score_graph
 from app.services.valuation import make_valuer
 
@@ -40,6 +40,7 @@ _ERROR_CODES = {
 class _Outcome:
     score: float
     bucket: str
+    flagged: bool
     breakdown: list[dict[str, object]]
     graph: dict[str, object]
     stats: dict[str, object]
@@ -181,6 +182,7 @@ class ScoreJobs:
                     finished_at=self._now(),
                     score=outcome.score,
                     bucket=outcome.bucket,
+                    flagged=outcome.flagged,
                     breakdown_json=outcome.breakdown,
                     graph_json=outcome.graph,
                     stats_json={**outcome.stats, "duration_ms": duration_ms},
@@ -191,15 +193,21 @@ class ScoreJobs:
         async with self._sessions() as session:
             labels = await load_label_index(session)
             overrides = await load_severity_overrides(session)
+            names = await load_label_names(session)
         builder = GraphBuilder(
             self._lookup, labels, self._params.graph, make_valuer(self._params.valuation)
         )
         graph = await builder.build(address)
         result = score_graph(graph, self._params, overrides)
+        breakdown = [
+            {**row, "name": names.get((item.address, item.label))}
+            for row, item in zip(breakdown_json(result), result.breakdown, strict=True)
+        ]
         return _Outcome(
             score=result.score,
             bucket=result.bucket,
-            breakdown=breakdown_json(result),
+            flagged=result.flagged,
+            breakdown=breakdown,
             graph=dict(flagged_subgraph(graph, result)),
             stats={
                 "nodes": graph.graph.number_of_nodes(),

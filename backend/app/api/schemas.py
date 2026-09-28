@@ -29,6 +29,9 @@ class ScoreRequest(BaseModel):
 
 class Contribution(BaseModel):
     address: str
+    name: str | None = Field(
+        default=None, description='Label name, e.g. "Tornado.Cash: 10 ETH", if known.'
+    )
     label: Literal["sanctioned", "malicious", "mixer"] = Field(
         description="The address's most severe risk label."
     )
@@ -88,6 +91,13 @@ class TraversalStats(BaseModel):
 class ScoreResult(BaseModel):
     score: float = Field(ge=0, le=100)
     bucket: Literal["low", "medium", "high", "severe"]
+    flagged: bool | None = Field(
+        description=(
+            "Whether the score reaches the tuned flag threshold (see docs/EVALUATION.md): "
+            "the model's yes/no call on exposure. The bucket describes its strength. "
+            "Null for runs made before this field existed."
+        )
+    )
     breakdown: list[Contribution]
     graph: FlaggedGraph
     stats: TraversalStats
@@ -131,6 +141,7 @@ class ScoreRunOut(BaseModel):
                 {
                     "score": run.score,
                     "bucket": run.bucket,
+                    "flagged": run.flagged,
                     "breakdown": run.breakdown_json,
                     "graph": run.graph_json,
                     "stats": run.stats_json,

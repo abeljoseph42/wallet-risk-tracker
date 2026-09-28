@@ -141,6 +141,8 @@ class ScoreRun(Base):
     params_hash: Mapped[str] = mapped_column(String(12), nullable=False)
     score: Mapped[float | None] = mapped_column(Float)
     bucket: Mapped[str | None] = mapped_column(String(16))
+    # score >= flag_threshold of the params used; NULL for runs made before it was stored.
+    flagged: Mapped[bool | None] = mapped_column(Boolean)
     # Flagged-address breakdown, flagged subgraph (nodes/edges) and traversal stats.
     breakdown_json: Mapped[list[dict[str, object]] | None] = mapped_column(JSONB)
     graph_json: Mapped[dict[str, object] | None] = mapped_column(JSONB)

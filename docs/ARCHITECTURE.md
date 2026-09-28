@@ -350,3 +350,39 @@ USD values, a total, and a `warnings` list.
 - **API keys are kept out of logs.** Etherscan and Alchemy both take the key in the URL,
   and httpx logs request URLs at INFO. So httpx logging is set to WARNING. Before this
   fix, 51 Etherscan request URLs with the key had been written to the local container logs.
+
+## Phase 8: Frontend
+
+React + Vite + TypeScript with TanStack Query, Tailwind CSS 4, and react-force-graph-2d.
+
+- **Exposure first, score second.** The headline badge ("Exposure detected" / "No exposure
+  found") comes from the stored `flagged` decision (score ≥ the tuned `flag_threshold`),
+  which is what `EVALUATION.md` measures. The 0–100 gauge and its bucket describe the
+  *strength* of the exposure. Buckets alone would label a flagged wallet with score 8
+  "Low". `flagged` is stored per run, so a later threshold change can't relabel old
+  results.
+- **Plain-language explanation.** The UI names the strongest link, its distance, and the
+  share of volume that moved along it, using label names that the API now includes in
+  the breakdown ("Tornado.Cash: 10 ETH", not an address). Ties in contribution are
+  broken by share of volume, both in the API and the UI.
+- **Submit, then poll.** The browser `POST`s once. The server reuses a recent result or an
+  in-flight job, and the page polls `GET /scores/{id}` every 1.5 s until the job is done
+  or failed. Failure codes map to plain messages; 422 validation errors show the
+  server's own message (e.g. a bad EIP-55 checksum).
+- **Client-side validation checks format only.** Verifying EIP-55 in the browser needs
+  Keccak-256, meaning a new dependency just to duplicate the server's check. The server
+  already returns a clear 422 for a bad checksum, so the UI shows that.
+- **The graph library is lazy-loaded** into its own chunk (61 KB gzipped), fetched only
+  when a result has flagged paths. Node size and link width scale with log(value moved).
+  Colors are paired with a text legend, and the breakdown table lists the same paths as
+  text, so the canvas isn't the only way to read them.
+- **Accessibility and responsiveness,** verified in headless Chrome:
+  - a skip link, a labeled input, and a focus ring on every control (keyboard order: skip
+    link → input → Analyze)
+  - `role="status"` for progress and `role="alert"` for errors
+  - table captions
+  - no horizontal page scroll at 390px; wide tables scroll inside their card
+- **Shareable URLs.** `?address=0x…` reproduces a view, and the "Try" buttons load a
+  Tornado Cash user and a randomly sampled wallet that scored 0 in the evaluation. Once
+  scored, these return instantly for an hour (result reuse), which makes a demo that
+  fits in 30 seconds possible.

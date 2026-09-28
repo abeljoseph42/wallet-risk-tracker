@@ -257,6 +257,16 @@ async def load_label_index(session: AsyncSession) -> dict[str, frozenset[str]]:
     return {address: frozenset(types) for address, types in index.items()}
 
 
+async def load_label_names(session: AsyncSession) -> dict[tuple[str, str], str]:
+    """(address, label type) -> human-readable name, e.g. "Tornado.Cash: 10 ETH"."""
+    rows = await session.execute(
+        select(AddressLabel.address, AddressLabel.label_type, AddressLabel.name).where(
+            AddressLabel.name.is_not(None)
+        )
+    )
+    return {(address, label_type): name for address, label_type, name in rows.all()}
+
+
 async def load_severity_overrides(session: AsyncSession) -> dict[tuple[str, str], float]:
     """Per-address severities that replace the label type's default from scoring.yaml."""
     rows = await session.execute(

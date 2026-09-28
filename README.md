@@ -3,7 +3,7 @@
 Paste an Ethereum address, get a 0-100 risk score based on transaction-graph proximity to
 sanctioned and known-malicious addresses, plus a portfolio view and a graph of flagged paths.
 
-> Status: Phase 7 (portfolio holdings). See `CLAUDE.md` for the full build plan.
+> Status: Phase 8 (frontend). See `CLAUDE.md` for the full build plan.
 
 ## Run locally
 
@@ -12,7 +12,7 @@ cp .env.example .env        # add API keys as later phases need them
 docker compose up --build
 ```
 
-- Frontend: http://localhost:5173 (shows backend health)
+- App: http://localhost:5173 (paste an address, or use the "Try" examples)
 - API docs: http://localhost:8000/docs
 
 Score a wallet (the job runs in the background; poll until `done`):

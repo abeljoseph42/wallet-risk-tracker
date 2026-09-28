@@ -92,7 +92,12 @@ async def make_client(
     """Builds an API client backed by the fake Etherscan; tears jobs down afterwards."""
     async with sessions() as session:
         await sync_labels(
-            session, [LabelRecord(address=SANCTIONED, label_type="sanctioned", source="test")]
+            session,
+            [
+                LabelRecord(
+                    address=SANCTIONED, label_type="sanctioned", source="test", name="Test Entity"
+                )
+            ],
         )
     created: list[ScoreJobs] = []
     http = httpx.AsyncClient(transport=httpx.MockTransport(etherscan))
@@ -150,8 +155,10 @@ async def test_submit_then_poll_returns_score_breakdown_and_flagged_graph(
     result = done["result"]
     assert result["score"] == 100
     assert result["bucket"] == "severe"
+    assert result["flagged"] is True
     [item] = result["breakdown"]
     assert item["address"] == SANCTIONED
+    assert item["name"] == "Test Entity"
     assert item["hops"] == 1
     assert item["bottleneck_eq_wei"] == ETH
     roles = {n["address"]: n["role"] for n in result["graph"]["nodes"]}
