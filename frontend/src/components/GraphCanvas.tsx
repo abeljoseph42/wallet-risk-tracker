@@ -9,6 +9,8 @@ type Node = { id: string; kind: NodeKind; val: number; label: string };
 type Link = { source: string; target: string; eth: number };
 
 const HEIGHT = 360;
+// force-graph's default: a node's radius is sqrt(val) * nodeRelSize.
+const NODE_REL_SIZE = 4;
 
 export default function GraphCanvas({
   nodes,
@@ -54,6 +56,7 @@ export default function GraphCanvas({
         graphData={data}
         width={width}
         height={HEIGHT}
+        nodeRelSize={NODE_REL_SIZE}
         nodeVal={(n) => n.val}
         nodeColor={(n) => NODE_COLORS[n.kind]}
         nodeLabel={(n) => `${n.label} (${n.id})`}
@@ -68,7 +71,9 @@ export default function GraphCanvas({
           ctx.font = `${12 / scale}px system-ui, sans-serif`;
           ctx.fillStyle = "#0f172a";
           ctx.textAlign = "center";
-          ctx.fillText(node.label, node.x ?? 0, (node.y ?? 0) + 10 / scale + Math.sqrt(node.val) * 2);
+          const radius = Math.sqrt(node.val) * NODE_REL_SIZE;
+          ctx.textBaseline = "top";
+          ctx.fillText(node.label, node.x ?? 0, (node.y ?? 0) + radius + 3 / scale);
         }}
       />
     </div>

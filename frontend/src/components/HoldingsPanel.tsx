@@ -22,9 +22,9 @@ function Row({ holding }: { holding: Holding }) {
           </div>
         )}
       </td>
-      <td className="py-2 pr-4 text-right tabular-nums">{formatBalance(holding.balance)}</td>
-      <td className="py-2 pr-4 text-right tabular-nums">{formatUsd(holding.price_usd)}</td>
-      <td className="py-2 text-right font-medium tabular-nums">{formatUsd(holding.value_usd)}</td>
+      <td className="py-2 pr-4 text-right tabular-nums whitespace-nowrap">{formatBalance(holding.balance)}</td>
+      <td className="py-2 pr-4 text-right tabular-nums whitespace-nowrap">{formatUsd(holding.price_usd)}</td>
+      <td className="py-2 text-right font-medium tabular-nums whitespace-nowrap">{formatUsd(holding.value_usd)}</td>
     </tr>
   );
 }

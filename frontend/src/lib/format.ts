@@ -59,9 +59,17 @@ function distance(hops: number): string {
   return `${hops} hops away`;
 }
 
+// Strongest first; ties (common once the flow factor saturates) go to the larger share
+// of volume. The API sorts the same way, but runs stored before that fix may not be.
+export function sortBreakdown(items: Contribution[]): Contribution[] {
+  return [...items].sort(
+    (a, b) => b.contribution - a.contribution || b.flow_share - a.flow_share || a.hops - b.hops,
+  );
+}
+
 // One or two plain-English sentences summarizing the score for a non-expert.
 export function explain(result: ScoreResult): string {
-  const [top, ...rest] = result.breakdown;
+  const [top, ...rest] = sortBreakdown(result.breakdown);
   if (!top) {
     return (
       `No sanctioned, malicious or mixer addresses were found within 3 hops of this wallet ` +

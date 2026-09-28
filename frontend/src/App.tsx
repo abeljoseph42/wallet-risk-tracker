@@ -90,13 +90,17 @@ export default function App() {
         {result && (
           <div className="space-y-5">
             <RiskSummary result={result} />
-            <div className="grid gap-5 lg:grid-cols-2">
-              <div className="space-y-5">
-                <BreakdownTable items={result.breakdown} />
-                <FlaggedGraph result={result} />
+            {result.breakdown.length > 0 ? (
+              <div className="grid gap-5 lg:grid-cols-2">
+                <div className="min-w-0 space-y-5">
+                  <BreakdownTable items={result.breakdown} />
+                  <FlaggedGraph result={result} />
+                </div>
+                <div className="min-w-0">{address && <HoldingsPanel address={address} />}</div>
               </div>
-              {address && <HoldingsPanel address={address} />}
-            </div>
+            ) : (
+              address && <HoldingsPanel address={address} />
+            )}
             <p className="text-xs text-slate-500">
               Checked {result.stats.nodes} addresses ({result.stats.expanded} expanded) with{" "}
               {result.stats.api_calls} Etherscan calls in {(result.stats.duration_ms / 1000).toFixed(1)}s ·

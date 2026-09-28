@@ -104,7 +104,8 @@ def score_graph(
             )
         )
 
-    breakdown.sort(key=lambda c: (-c.contribution, c.hops, c.address))
+    # Ties (common once flow saturates) go to the path that moved the larger share of volume.
+    breakdown.sort(key=lambda c: (-c.contribution, -c.flow_share, c.hops, c.address))
     remaining = 1.0
     for item in breakdown:
         remaining *= 1 - item.contribution

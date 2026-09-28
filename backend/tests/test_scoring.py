@@ -299,3 +299,17 @@ def test_flagged_uses_the_flag_threshold(params: ScoringParams) -> None:
     assert not score_graph(graph, strict).flagged
     assert score_graph(graph, lenient).flagged
     assert not score_graph(make_graph([(ROOT, A, ETH)]), lenient).flagged
+
+
+def test_ties_in_contribution_rank_the_larger_flow_first(params: ScoringParams) -> None:
+    saturating = params.model_copy(
+        update={"flow": params.flow.model_copy(update={"share_saturation": 0.01})}
+    )
+    # Both mixer links saturate the flow factor (contribution 0.7 each); B moved far more.
+    graph = make_graph([(ROOT, MIXER, 2 * ETH), (ROOT, B, 60 * ETH), (B, "0x" + "7" * 40, 0)])
+    graph.graph.nodes[B]["labels"] = ["mixer"]
+
+    result = score_graph(graph, saturating)
+
+    assert [c.contribution for c in result.breakdown] == [0.7, 0.7]
+    assert result.breakdown[0].address == B

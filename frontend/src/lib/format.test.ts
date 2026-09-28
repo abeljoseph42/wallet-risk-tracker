@@ -62,3 +62,10 @@ test("explains a clean result and a directly labeled address", () => {
     "This address is itself labeled OFAC-sanctioned.",
   );
 });
+
+
+test("ties rank the larger share of volume first", () => {
+  const small = item({ address: "0xsmall", name: "1 ETH pool", flow_share: 0.016 });
+  const big = item({ address: "0xbig", name: "10 ETH pool", flow_share: 0.476 });
+  expect(explain(result([small, big]))).toContain("strongest link is to 10 ETH pool");
+});

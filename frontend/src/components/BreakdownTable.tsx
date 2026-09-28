@@ -1,5 +1,5 @@
 import type { Contribution } from "../api";
-import { formatEth, formatPercent, LABEL_TEXT, shortAddress } from "../lib/format";
+import { formatEth, formatPercent, LABEL_TEXT, shortAddress, sortBreakdown } from "../lib/format";
 
 export function BreakdownTable({ items }: { items: Contribution[] }) {
   if (items.length === 0) return null;
@@ -24,7 +24,7 @@ export function BreakdownTable({ items }: { items: Contribution[] }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {items.map((item) => (
+            {sortBreakdown(items).map((item) => (
               <tr key={item.address}>
                 <td className="py-2 pr-4">
                   <div className="font-medium text-slate-900">{item.name ?? "Unnamed"}</div>
@@ -38,10 +38,10 @@ export function BreakdownTable({ items }: { items: Contribution[] }) {
                     <span className="ml-1 text-xs text-slate-500">(via exchange/hub)</span>
                   )}
                 </td>
-                <td className="py-2 pr-4 text-right tabular-nums">{item.hops}</td>
-                <td className="py-2 pr-4 text-right tabular-nums">{formatEth(item.bottleneck_eq_wei)}</td>
-                <td className="py-2 pr-4 text-right tabular-nums">{formatPercent(item.flow_share)}</td>
-                <td className="py-2 text-right font-medium tabular-nums">{(item.contribution * 100).toFixed(1)}</td>
+                <td className="py-2 pr-4 text-right tabular-nums whitespace-nowrap">{item.hops}</td>
+                <td className="py-2 pr-4 text-right tabular-nums whitespace-nowrap">{formatEth(item.bottleneck_eq_wei)}</td>
+                <td className="py-2 pr-4 text-right tabular-nums whitespace-nowrap">{formatPercent(item.flow_share)}</td>
+                <td className="py-2 text-right font-medium tabular-nums whitespace-nowrap">{(item.contribution * 100).toFixed(1)}</td>
               </tr>
             ))}
           </tbody>
